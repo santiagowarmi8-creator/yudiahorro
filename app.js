@@ -37,9 +37,14 @@ const blank = () => ({
 let S;
 try { S = Object.assign(blank(), JSON.parse(localStorage.getItem(KEY) || 'null') || {}); S.settings = Object.assign(blank().settings, S.settings); }
 catch { S = blank(); }
-const save = () => { try { localStorage.setItem(KEY, JSON.stringify(S)); } catch (e) { toast('⚠️ No se pudo guardar: ' + e.message); } };
+let prevSnap = JSON.parse(JSON.stringify(S));
+const save = () => {
+  stamp(prevSnap, S); prevSnap = JSON.parse(JSON.stringify(S));
+  try { localStorage.setItem(KEY, JSON.stringify(S)); } catch (e) { toast('⚠️ No se pudo guardar: ' + e.message); }
+  if (Sync.on) { Sync.conf.dirty = true; Sync.saveConf(); Sync.schedule(); }
+};
 
-let view = location.hash.slice(1) || 'resumen';
+let view = (location.hash.slice(1).startsWith('sync=') ? '' : location.hash.slice(1)) || 'resumen';
 let curMonth = todayStr().slice(0, 7);
 let charts = [];
 let openRifa = null;
@@ -130,7 +135,7 @@ const NAV = [
 function renderNav() {
   const due = upcoming().filter(x => x.kind !== 'rifa' && x.d <= 3).length;
   $('#sidebar').innerHTML = NAV.map(([k, e, l]) => `<button class="nav-item ${view === k ? 'active' : ''}" data-v="${k}"><span class="em">${e}</span>${l}${k === 'pagos' && due ? `<span class="badge">${due}</span>` : ''}</button>`).join('')
-    + `<p class="muted small" style="padding:14px">🔐 Tus datos se guardan solo en este navegador. Haz respaldo en Ajustes.</p>`;
+    + `<p class="muted small" style="padding:14px">🔐 Tus datos se guardan en este dispositivo${Sync.on ? ' y se sincronizan cifrados ☁️' : '. Activa la sincronización en Ajustes'}.</p>`;
   const mob = ['resumen', 'gastos', 'ingresos', 'rifas', 'pagos'];
   $('#bottomNav').innerHTML = NAV.filter(n => mob.includes(n[0])).map(([k, e, l]) => `<button class="${view === k ? 'active' : ''}" data-v="${k}"><span class="em">${e}</span>${l.split(' ')[0]}</button>`).join('') + `<button data-menu><span class="em">☰</span>Más</button>`;
 }
@@ -140,7 +145,7 @@ document.addEventListener('click', e => {
   else if (!e.target.closest('#sidebar')) $('#sidebar').classList.remove('open');
 });
 function go(v) { view = v; openRifa = null; location.hash = v; $('#sidebar').classList.remove('open'); render(); scrollTo({ top: 0, behavior: 'smooth' }); }
-window.addEventListener('hashchange', () => { const v = location.hash.slice(1); if (v && v !== view) { view = v; render(); } });
+window.addEventListener('hashchange', () => { const v = location.hash.slice(1); if (v.startsWith('sync=')) { initSyncLink(); return; } if (v && v !== view) { view = v; render(); } });
 $('#prevMonth').onclick = () => { curMonth = addMonths(curMonth, -1); render(); };
 $('#nextMonth').onclick = () => { curMonth = addMonths(curMonth, 1); render(); };
 $('#themeBtn').onclick = () => { S.settings.theme = S.settings.theme === 'dark' ? 'light' : 'dark'; save(); applyTheme(); render(); };
@@ -545,6 +550,7 @@ V.deudas.after = () => {
 /* Ajustes */
 V.ajustes = () => `<div class="page-head"><div><h1 class="page-title">⚙️ Ajustes y respaldo</h1><p class="muted">Tus datos, tus reglas</p></div></div>
   <div class="grid g2">
+    ${syncCardHtml()}
     <div class="card"><h3>👫 General</h3><form class="form" id="setForm">
       <label>Nombre 1<input name="nombre1" value="${esc(S.settings.nombre1)}"></label><label>Nombre 2<input name="nombre2" value="${esc(S.settings.nombre2)}"></label>
       <label>Mostrar montos en<select name="moneda">${opts({ DOP: 'RD$ Pesos dominicanos', USD: 'US$ Dólares' }, S.settings.moneda)}</select></label>
@@ -554,7 +560,7 @@ V.ajustes = () => `<div class="page-head"><div><h1 class="page-title">⚙️ Aju
     <div class="card"><h3>🔒 PIN de bloqueo</h3><p class="muted small">Pide un PIN de 4 dígitos al abrir la página en este dispositivo. Es una comodidad para que nadie vea tus números de pasada, <b>no es seguridad real</b>.</p>
       <div class="btn-row"><button class="btn primary" id="setPin">${S.settings.pin ? '🔁 Cambiar PIN' : '🔒 Poner PIN'}</button>${S.settings.pin ? '<button class="btn danger" id="rmPin">Quitar PIN</button>' : ''}</div>
       <h3 class="section-gap">🎨 Tema</h3><div class="btn-row"><button class="btn" data-theme-set="dark">🌙 Oscuro</button><button class="btn" data-theme-set="light">☀️ Claro</button></div></div>
-    <div class="card"><h3>💾 Respaldo</h3><p class="muted small">Los datos viven <b>solo en este navegador</b>. Si borras el historial o cambias de teléfono, se pierden. Descarga un respaldo de vez en cuando e impórtalo en el otro dispositivo.</p>
+    <div class="card"><h3>💾 Respaldo</h3><p class="muted small">Además de la sincronización, descarga un respaldo de vez en cuando: es tu copia de seguridad por si algo pasa.</p>
       <div class="btn-row"><button class="btn primary" id="expJson">⬇️ Descargar respaldo (JSON)</button><label class="btn">⬆️ Importar respaldo<input type="file" id="impJson" accept=".json,application/json" hidden></label></div>
       <h3 class="section-gap">📊 Exportar a Excel</h3><div class="btn-row"><button class="btn" id="expCsv">⬇️ Movimientos (CSV)</button><button class="btn" id="expCsvR">⬇️ Rifas (CSV)</button></div></div>
     <div class="card"><h3>🧪 Datos</h3><p class="muted small">Carga datos de ejemplo para ver cómo funciona todo (no son tus datos reales). Luego bórralos y empieza con lo tuyo.</p>
@@ -564,6 +570,7 @@ V.ajustes = () => `<div class="page-head"><div><h1 class="page-title">⚙️ Aju
 const download = (name, text, type) => { const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([text], { type })); a.download = name; document.body.appendChild(a); a.click(); setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 500); };
 const csv = rows => '\ufeff' + rows.map(r => r.map(c => `"${String(c ?? '').replace(/"/g, '""')}"`).join(',')).join('\r\n');
 V.ajustes.after = () => {
+  syncCardAfter();
   $('#saveSet').onclick = () => { const f = $('#setForm').elements; S.settings.nombre1 = f.nombre1.value.trim() || 'Warmi'; S.settings.nombre2 = f.nombre2.value.trim() || 'Yudith'; S.settings.moneda = f.moneda.value; S.settings.tasa = num(f.tasa.value) || 1; S.settings.efectivo = num(f.efectivo.value); save(); render(); toast('✓ Ajustes guardados'); };
   document.querySelectorAll('[data-theme-set]').forEach(b => b.onclick = () => { S.settings.theme = b.dataset.themeSet; save(); applyTheme(); render(); });
   $('#setPin').onclick = () => form('🔒 Nuevo PIN', [{ k: 'p', label: 'PIN de 4 dígitos', type: 'password', req: true }], {}, v => { if (!/^\d{4}$/.test(v.p)) { toast('El PIN debe ser de 4 números'); return; } S.settings.pin = hash(v.p); toast('🔒 PIN activado'); });
@@ -577,7 +584,7 @@ V.ajustes.after = () => {
     download(`yudiahorro-movimientos-${todayStr()}.csv`, csv(rows), 'text/csv;charset=utf-8'); };
   $('#expCsvR').onclick = () => { const rows = [['Rifa', 'Premio', 'Fecha sorteo', 'Número', 'Comprador', 'Teléfono', 'Pagado', 'Precio']]; S.rifas.forEach(r => Object.entries(r.numeros).forEach(([n, v]) => rows.push([r.nombre, r.premio, r.fecha, n, v.nombre, v.tel, v.pagado ? 'Sí' : 'No', r.precio]))); download(`yudiahorro-rifas-${todayStr()}.csv`, csv(rows), 'text/csv;charset=utf-8'); };
   $('#demo').onclick = () => isEmpty() ? loadDemo() : confirmDo('Esto reemplaza tus datos actuales con datos de EJEMPLO. Descarga un respaldo antes si tienes datos reales.', loadDemo);
-  $('#wipe').onclick = () => confirmDo('Se borrará TODO de este navegador. Descarga un respaldo antes si lo necesitas.', () => { const keep = { theme: S.settings.theme }; S = blank(); Object.assign(S.settings, keep); save(); render(); toast('🗑️ Todo borrado'); });
+  $('#wipe').onclick = () => confirmDo(Sync.on ? 'Se borrará TODO, también en los otros dispositivos sincronizados. Descarga un respaldo antes si lo necesitas.' : 'Se borrará TODO de este navegador. Descarga un respaldo antes si lo necesitas.', () => { const keep = { theme: S.settings.theme, pin: S.settings.pin }; S = blank(); Object.assign(S.settings, keep); save(); render(); toast('🗑️ Todo borrado'); });
 };
 
 /* ---------- Datos de ejemplo (ficticios) ---------- */
@@ -652,6 +659,209 @@ function lockScreen() {
   document.addEventListener('keydown', e => { if (lock.classList.contains('hidden')) return; if (/^\d$/.test(e.key)) press(e.key); if (e.key === 'Backspace') press('⌫'); });
 }
 
+/* ---------- Sincronización en la nube (cifrada de punta a punta) ---------- */
+const SYNC_URL = 'https://yudiahorro-sync.santiagowarmi8.workers.dev';
+const SYNC_KEY = 'yudiahorro_sync';
+const COLS = ['ingresos', 'gastos', 'inversiones', 'rifas', 'metas', 'deudas', 'pagos'];
+const LOCAL_ONLY = ['theme', 'pin'];
+const clone = o => JSON.parse(JSON.stringify(o));
+const sigItem = x => JSON.stringify(x, (k, v) => (k === 'u' || k === '_f') ? undefined : v);
+const sigSettings = s => JSON.stringify(s, (k, v) => (k === '_u' || LOCAL_ONLY.includes(k)) ? undefined : v);
+/* Marca con fecha (u) lo que cambió desde el último guardado y deja "lápidas" de lo borrado */
+function stamp(prev, cur) {
+  const now = Date.now();
+  cur.deleted = Object.assign({}, prev.deleted || {}, cur.deleted || {});
+  COLS.forEach(c => {
+    const pm = new Map((prev[c] || []).map(x => [x.id, x])), ids = new Set();
+    (cur[c] || []).forEach(x => {
+      ids.add(x.id); const p = pm.get(x.id);
+      if (!p || sigItem(p) !== sigItem(x)) x.u = now;
+      if (c === 'rifas') {
+        x.numeros = x.numeros || {}; x.numDel = Object.assign({}, (p && p.numDel) || {}, x.numDel || {});
+        const pn = (p && p.numeros) || {};
+        Object.entries(x.numeros).forEach(([n, v]) => { if (!pn[n] || sigItem(pn[n]) !== sigItem(v)) v.u = now; });
+        Object.keys(pn).forEach(n => { if (!x.numeros[n]) x.numDel[n] = now; });
+      }
+    });
+    pm.forEach((_, id) => { if (!ids.has(id)) cur.deleted[id] = now; });
+  });
+  if (sigSettings(prev.settings || {}) !== sigSettings(cur.settings)) cur.settings._u = now; else cur.settings._u = cur.settings._u ?? (prev.settings || {})._u;
+  if (JSON.stringify(prev.presupuestos || {}) !== JSON.stringify(cur.presupuestos || {})) cur.presU = now; else cur.presU = cur.presU ?? prev.presU;
+}
+/* Combina dos versiones: gana el registro editado más recientemente; los borrados se respetan */
+function mergeStates(a, b) {
+  const out = clone(a), del = Object.assign({}, b.deleted || {});
+  Object.entries(a.deleted || {}).forEach(([k, v]) => del[k] = Math.max(v, del[k] || 0));
+  out.deleted = del;
+  COLS.forEach(c => {
+    const map = new Map(); (a[c] || []).forEach(x => map.set(x.id, clone(x)));
+    (b[c] || []).forEach(y => {
+      const x = map.get(y.id); if (!x) { map.set(y.id, clone(y)); return; }
+      const w = clone((y.u || 0) > (x.u || 0) ? y : x);
+      if (c === 'rifas') {
+        const nd = Object.assign({}, y.numDel || {}); Object.entries(x.numDel || {}).forEach(([k, v]) => nd[k] = Math.max(v, nd[k] || 0));
+        const nums = {}; new Set([...Object.keys(x.numeros || {}), ...Object.keys(y.numeros || {})]).forEach(n => {
+          const p = (x.numeros || {})[n], q = (y.numeros || {})[n]; const win = !p ? q : !q ? p : ((q.u || 0) > (p.u || 0) ? q : p);
+          if (!(nd[n] && nd[n] >= (win.u || 0))) nums[n] = clone(win);
+        });
+        w.numeros = nums; w.numDel = nd;
+      }
+      map.set(y.id, w);
+    });
+    out[c] = [...map.values()].filter(x => !(del[x.id] && del[x.id] >= (x.u || 0)));
+  });
+  if (((b.settings || {})._u || 0) > ((a.settings || {})._u || 0)) { out.settings = Object.assign(blank().settings, clone(b.settings)); LOCAL_ONLY.forEach(k => out.settings[k] = a.settings[k]); }
+  if ((b.presU || 0) > (a.presU || 0)) { out.presupuestos = clone(b.presupuestos || {}); out.presU = b.presU; }
+  return out;
+}
+const forCloud = st => { const o = clone(st); LOCAL_ONLY.forEach(k => delete o.settings[k]); (o.rifas || []).forEach(r => delete r._f); return o; };
+const b64 = buf => { let s = ''; const u = new Uint8Array(buf); for (let i = 0; i < u.length; i += 32768) s += String.fromCharCode.apply(null, u.subarray(i, i + 32768)); return btoa(s); };
+const unb64 = s => Uint8Array.from(atob(s), c => c.charCodeAt(0));
+const te = new TextEncoder(), td = new TextDecoder();
+const streamBytes = async (bytes, T) => new Uint8Array(await new Response(new Blob([bytes]).stream().pipeThrough(new T('gzip'))).arrayBuffer());
+const normCode = c => String(c || '').trim().toLowerCase().replace(/\s+/g, '-');
+const Sync = {
+  conf: (() => { try { return JSON.parse(localStorage.getItem(SYNC_KEY) || 'null') || {}; } catch { return {}; } })(),
+  id: null, key: null, status: 'off', timer: null, running: false, again: false, last: 0, err: '',
+  saveConf() { localStorage.setItem(SYNC_KEY, JSON.stringify(this.conf)); },
+  get on() { return !!this.conf.code; },
+  async derive(code) {
+    const base = await crypto.subtle.importKey('raw', te.encode(normCode(code)), 'PBKDF2', false, ['deriveBits']);
+    const bits = new Uint8Array(await crypto.subtle.deriveBits({ name: 'PBKDF2', salt: te.encode('yudiahorro-sync-v1'), iterations: 250000, hash: 'SHA-256' }, base, 512));
+    const idh = new Uint8Array(await crypto.subtle.digest('SHA-256', bits.slice(0, 32)));
+    this.id = [...idh].map(x => x.toString(16).padStart(2, '0')).join('');
+    this.key = await crypto.subtle.importKey('raw', bits.slice(32), 'AES-GCM', false, ['encrypt', 'decrypt']);
+  },
+  async encrypt(obj) {
+    let bytes = te.encode(JSON.stringify(obj)), fmt = 'p1';
+    if (typeof CompressionStream !== 'undefined') { bytes = await streamBytes(bytes, CompressionStream); fmt = 'g1'; }
+    const iv = crypto.getRandomValues(new Uint8Array(12));
+    return `${fmt}.${b64(iv)}.${b64(await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, this.key, bytes))}`;
+  },
+  async decrypt(s) {
+    const [fmt, iv, ct] = s.split('.');
+    let bytes = new Uint8Array(await crypto.subtle.decrypt({ name: 'AES-GCM', iv: unb64(iv) }, this.key, unb64(ct)));
+    if (fmt === 'g1') bytes = await streamBytes(bytes, DecompressionStream);
+    return JSON.parse(td.decode(bytes));
+  },
+  setStatus(s, err = '') { this.status = s; this.err = err; paintSync(); },
+  schedule(ms = 1200) { if (!this.on) return; clearTimeout(this.timer); this.timer = setTimeout(() => this.run(), ms); },
+  async run(mode) {
+    if (!this.on) return;
+    if (this.running) { this.again = true; return; }
+    if (!$('#modalBg').classList.contains('hidden') && mode !== 'force') { this.schedule(3000); return; }
+    if (!navigator.onLine) { this.setStatus('offline'); return; }
+    this.running = true; this.setStatus('syncing');
+    try {
+      if (!this.key) await this.derive(this.conf.code);
+      for (let attempt = 0; attempt < 4; attempt++) {
+        const have = this.conf.ver || 0;
+        const res = await fetch(`${SYNC_URL}/v1/blob/${this.id}?have=${have}`, { cache: 'no-store' });
+        if (!res.ok) throw new Error('HTTP ' + res.status);
+        const g = await res.json();
+        if (g.same && !this.conf.dirty) break;
+        let remote = null, merged;
+        if (g.same) merged = clone(S); // la nube no cambió: solo subimos lo local
+        else {
+          if (g.data) remote = await this.decrypt(g.data);
+          merged = remote ? mergeStates(S, remote) : clone(S);
+          if (mode === 'replace' && remote) { merged = clone(remote); merged.settings = Object.assign(blank().settings, remote.settings); LOCAL_ONLY.forEach(k => merged.settings[k] = S.settings[k]); }
+        }
+        if (JSON.stringify(forCloud(merged)) !== JSON.stringify(forCloud(S))) applyRemote(merged);
+        const needPush = g.same || !remote || JSON.stringify(forCloud(merged)) !== JSON.stringify(forCloud(remote));
+        if (needPush) {
+          const put = await fetch(`${SYNC_URL}/v1/blob/${this.id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ver: g.ver, data: await this.encrypt(forCloud(merged)) }) });
+          if (put.status === 409) { this.conf.ver = -1; continue; } // otro dispositivo guardó primero: volver a bajar y combinar
+          if (put.status === 413) throw new Error('Datos demasiado grandes para sincronizar');
+          if (!put.ok) throw new Error('HTTP ' + put.status);
+          this.conf.ver = (await put.json()).ver;
+        } else this.conf.ver = g.ver;
+        mode = undefined;
+        break;
+      }
+      this.conf.dirty = false; this.last = Date.now(); this.conf.last = this.last; this.saveConf(); this.setStatus('ok');
+    } catch (e) {
+      this.saveConf(); this.setStatus(navigator.onLine ? 'error' : 'offline', e.message || String(e));
+    } finally {
+      this.running = false;
+      if (this.again) { this.again = false; this.schedule(300); }
+    }
+  },
+  async connect(code, mode) {
+    code = normCode(code); if (code.length < 8) { toast('El código debe tener al menos 8 caracteres'); return; }
+    this.conf = { code, ver: 0, dirty: true }; this.id = null; this.key = null; this.saveConf();
+    await this.run(mode || 'force'); render();
+    if (this.status === 'ok') toast('☁️ ¡Dispositivo conectado!');
+  },
+  disconnect() { this.conf = {}; this.id = null; this.key = null; this.saveConf(); this.setStatus('off'); render(); toast('Este dispositivo ya no se sincroniza'); }
+};
+function applyRemote(merged) {
+  S = merged; S.settings = Object.assign(blank().settings, S.settings);
+  prevSnap = clone(S);
+  try { localStorage.setItem(KEY, JSON.stringify(S)); } catch { }
+  const ae = document.activeElement;
+  if ($('#modalBg').classList.contains('hidden') && !(ae && ae.closest && ae.closest('#main') && /INPUT|SELECT|TEXTAREA/.test(ae.tagName))) { applyTheme(); render(); }
+}
+const newCode = () => { const a = 'abcdefghjkmnpqrstuvwxyz23456789', r = crypto.getRandomValues(new Uint8Array(16)); return 'yudi-' + [0, 1, 2, 3].map(g => [...r.slice(g * 4, g * 4 + 4)].map(x => a[x % a.length]).join('')).join('-'); };
+const linkFor = code => `${location.origin}${location.pathname}#sync=${encodeURIComponent(code)}`;
+function paintSync() {
+  const b = $('#syncBtn'); if (!b) return;
+  const m = { off: ['☁️', 'Sincronización apagada'], ok: ['✅', 'Sincronizado'], syncing: ['🔄', 'Sincronizando…'], offline: ['📴', 'Sin conexión: se sincroniza al volver el internet'], error: ['⚠️', 'Error al sincronizar'] }[Sync.status] || ['☁️', ''];
+  b.innerHTML = `<span class="${Sync.status === 'syncing' ? 'spin' : ''}">${m[0]}</span><span class="sync-txt">${Sync.status === 'off' ? 'Sincronizar' : Sync.status === 'ok' ? 'Sincronizado' : Sync.status === 'syncing' ? 'Sincronizando' : Sync.status === 'offline' ? 'Sin conexión' : 'Error'}</span>`;
+  b.title = m[1] + (Sync.err ? ' — ' + Sync.err : '');
+  b.className = 'sync-pill ' + Sync.status;
+  const st = $('#syncState'); if (st) st.innerHTML = syncStateHtml();
+}
+const syncStateHtml = () => `${{ ok: '✅ Sincronizado', syncing: '🔄 Sincronizando…', offline: '📴 Sin conexión (se guardan los cambios y se suben al volver)', error: '⚠️ Error: ' + esc(Sync.err), off: '☁️ Apagada' }[Sync.status]}${Sync.conf.last ? ` · última vez ${new Date(Sync.conf.last).toLocaleTimeString('es-DO', { hour: '2-digit', minute: '2-digit' })}` : ''}`;
+function syncCardHtml() {
+  if (!Sync.on) return `<div class="card" id="syncCard"><h3>☁️ Sincronización entre teléfonos y PC</h3>
+    <p class="muted small">Conecta todos tus dispositivos con un <b>código familiar</b> y los datos se mantienen iguales en todos, automáticamente. Se guardan <b>cifrados</b> en la nube: sin el código nadie puede leerlos (ni siquiera el servidor).</p>
+    <div class="btn-row"><button class="btn primary" id="syncNew">✨ Crear código familiar</button><button class="btn" id="syncHave">🔑 Ya tengo un código</button></div></div>`;
+  return `<div class="card" id="syncCard"><h3>☁️ Sincronización activada</h3>
+    <p class="small" id="syncState">${syncStateHtml()}</p>
+    <div class="grid g2" style="align-items:center"><div id="qrBox" class="qr-box"></div>
+    <div><p class="small"><b>Conectar otro teléfono:</b> abre la cámara y escanea este código QR. O comparte el enlace / escribe el código en Ajustes → "Ya tengo un código".</p>
+    <p class="small">Código familiar:<br><code class="code-box" id="codeBox">••••-••••-••••</code> <button class="btn sm" id="showCode">👁️</button></p></div></div>
+    <p class="muted small">⚠️ Guarda este código en un lugar seguro. Si lo pierdes, los datos siguen en tus dispositivos, pero no podrás conectar uno nuevo. Quien tenga el código puede ver y cambiar las finanzas.</p>
+    <div class="btn-row"><button class="btn primary" id="syncNow">🔄 Sincronizar ahora</button><button class="btn" id="copyLink">🔗 Copiar enlace</button><button class="btn danger" id="syncOff">Desconectar este dispositivo</button></div></div>`;
+}
+function syncCardAfter() {
+  const askConnect = code => {
+    if (isEmpty()) return Sync.connect(code);
+    modal(`<h2>☁️ Conectar este dispositivo</h2><p>Este dispositivo ya tiene datos. ¿Qué hacemos con ellos?</p><div class="list"><button class="btn primary" data-m="merge">🤝 Combinarlos con los de la nube</button><button class="btn" data-m="replace">☁️ Usar solo los de la nube (borra los de aquí)</button></div><p class="muted small">Si aquí solo tienes datos de ejemplo, elige "Usar solo los de la nube".</p><div class="modal-actions"><button class="btn" data-x>Cancelar</button></div>`);
+    $('#modal [data-x]').onclick = closeModal;
+    document.querySelectorAll('#modal [data-m]').forEach(b => b.onclick = () => { closeModal(); Sync.connect(code, b.dataset.m === 'replace' ? 'replace' : 'force'); });
+  };
+  syncCardAfter.ask = askConnect;
+  const n = $('#syncNew'); if (n) n.onclick = () => { const c = newCode(); modal(`<h2>✨ Tu código familiar</h2><p class="code-box big">${c}</p><p class="muted small">Guárdalo (captura de pantalla o en tus notas). Lo vas a usar para conectar el teléfono de ${esc(S.settings.nombre2)} y la PC. Luego te muestro un QR para hacerlo más fácil.</p><div class="modal-actions"><button class="btn" data-x>Cancelar</button><button class="btn primary" data-ok>Activar sincronización ✓</button></div>`); $('#modal [data-x]').onclick = closeModal; $('#modal [data-ok]').onclick = () => { closeModal(); Sync.connect(c); }; };
+  const h = $('#syncHave'); if (h) h.onclick = () => form('🔑 Entrar código familiar', [{ k: 'c', label: 'Código', req: true, full: true, ph: 'yudi-xxxx-xxxx-xxxx-xxxx' }], {}, v => setTimeout(() => askConnect(v.c), 50));
+  if (!Sync.on) return;
+  const qb = $('#qrBox');
+  if (qb) { if (typeof qrcode !== 'undefined') { const q = qrcode(0, 'M'); q.addData(linkFor(Sync.conf.code)); q.make(); qb.innerHTML = q.createSvgTag({ cellSize: 5, margin: 2, scalable: true }); } else qb.innerHTML = '<p class="muted small">QR no disponible sin conexión</p>'; }
+  $('#showCode').onclick = () => { const cb = $('#codeBox'); cb.textContent = cb.textContent.includes('•') ? Sync.conf.code : '••••-••••-••••'; };
+  $('#syncNow').onclick = () => Sync.run('force');
+  $('#copyLink').onclick = () => (navigator.clipboard ? navigator.clipboard.writeText(linkFor(Sync.conf.code)) : Promise.reject()).then(() => toast('🔗 Enlace copiado. Ábrelo en el otro teléfono')).catch(() => toast(linkFor(Sync.conf.code)));
+  $('#syncOff').onclick = () => confirmDo('Este dispositivo dejará de sincronizar (los datos se quedan aquí y en la nube).', () => Sync.disconnect());
+}
+function initSync() {
+  // Enlace de conexión: #sync=CODIGO (va en el "hash", nunca se envía a ningún servidor)
+  const m = location.hash.match(/^#sync=(.+)$/);
+  if (m) {
+    const code = normCode(decodeURIComponent(m[1]));
+    history.replaceState(null, '', location.pathname + '#ajustes'); view = 'ajustes'; render();
+    if (Sync.on && Sync.conf.code === code) toast('Este dispositivo ya está conectado ✅');
+    else setTimeout(() => { modal(`<h2>☁️ ¿Conectar este dispositivo?</h2><p>Se van a sincronizar las finanzas de la casa con el código <b>${esc(code.slice(0, 9))}…</b></p><div class="modal-actions"><button class="btn" data-x>No</button><button class="btn primary" data-ok>Sí, conectar ✓</button></div>`); $('#modal [data-x]').onclick = closeModal; $('#modal [data-ok]').onclick = () => { closeModal(); syncCardAfter.ask ? syncCardAfter.ask(code) : Sync.connect(code); }; }, 100);
+  }
+  if (Sync.on) { Sync.setStatus(navigator.onLine ? 'syncing' : 'offline'); Sync.run(); } else paintSync();
+  window.addEventListener('online', () => Sync.run());
+  window.addEventListener('offline', () => Sync.on && Sync.setStatus('offline'));
+  window.addEventListener('focus', () => Sync.run());
+  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') Sync.run(); });
+  setInterval(() => { if (document.visibilityState === 'visible') Sync.run(); }, 30000);
+  $('#syncBtn').onclick = () => { go('ajustes'); setTimeout(() => { const c = $('#syncCard'); if (c) c.scrollIntoView({ behavior: 'smooth' }); }, 50); };
+  window.yudiSync = Sync; // para pruebas desde la consola
+}
+
 /* ---------- Render ---------- */
 function render() {
   charts.forEach(c => c.destroy()); charts = [];
@@ -663,6 +873,7 @@ function render() {
   if (V[view].after) V[view].after();
   document.querySelectorAll('[data-quick]').forEach(b => b.onclick = () => b.dataset.quick === 'ingreso' ? editIngreso() : editGasto());
 }
-applyTheme(); render(); lockScreen();
+applyTheme(); render(); lockScreen(); initSync();
+function initSyncLink() { const m = location.hash.match(/^#sync=(.+)$/); if (m) { const code = normCode(decodeURIComponent(m[1])); history.replaceState(null, '', location.pathname + '#ajustes'); view = 'ajustes'; render(); if (!(Sync.on && Sync.conf.code === code)) syncCardAfter.ask(code); } }
 window.addEventListener('load', () => { if (view === 'resumen') render(); }); // re-dibuja gráficos cuando Chart.js cargue
 })();
