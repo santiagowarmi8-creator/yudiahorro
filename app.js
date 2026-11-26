@@ -21,7 +21,7 @@ const GASTO_CATS = {
 };
 const INGRESO_SRCS = {
   salario:['💼','Salario / Sueldo'], fluye:['🌊','Fluye (suscripciones PayPal)'], conquer:['⚔️','Servidor Conquer'], youtube:['▶️','YouTube / Facebook / Redes'],
-  rifas:['🎟️','Rifas de Yudith'], ventas:['🛍️','Ventas / Negocio'], remesas:['💌','Remesas'], freelance:['🧑‍💻','Trabajos / Freelance'], otros:['✨','Otros']
+  rifas:['🎟️','Rifas de Yudith'], inversiones:['📈','Inversiones / Retornos'], ventas:['🛍️','Ventas / Negocio'], remesas:['💌','Remesas'], freelance:['🧑‍💻','Trabajos / Freelance'], otros:['✨','Otros']
 };
 const INV_TIPOS = {coop:'🤝 Cooperativa', certificado:'🏛️ Certificado financiero / Banco', acciones:'📈 Acciones / Bolsa', cripto:'🪙 Cripto', negocio:'💼 Negocio propio', inmueble:'🏡 Inmueble / Solar', otro:'✨ Otro'};
 const DEUDA_TIPOS = {prestamo:'🏦 Préstamo', tarjeta:'💳 Tarjeta de crédito', san:'🤝 San / Sociedad', personal:'🙋 Préstamo personal', medeben:'💰 Me deben (yo presté)'};
@@ -69,7 +69,7 @@ const totals = m => { const i = sumDOP(inMonth(S.ingresos, m)), g = sumDOP(inMon
 const avgGastos = () => { const ms = [1, 2, 3].map(k => totals(addMonths(todayStr().slice(0, 7), -k)).g).filter(x => x > 0); const fijos = S.pagos.filter(p => p.activo !== false).reduce((t, p) => t + toDOP(p.monto, p.moneda), 0); return ms.length ? ms.reduce((a, b) => a + b, 0) / ms.length : (fijos || totals(curMonth).g); };
 const deudaPend = d => Math.max(0, num(d.total) - num(d.pagado));
 const netWorth = () => {
-  const inv = S.inversiones.reduce((t, x) => t + toDOP(x.actual, x.moneda), 0);
+  const inv = S.inversiones.filter(x => !x.cerrada).reduce((t, x) => t + toDOP(x.actual, x.moneda), 0);
   const metas = S.metas.reduce((t, x) => t + toDOP(x.ahorrado, x.moneda), 0);
   const deb = S.deudas.filter(d => d.tipo !== 'medeben').reduce((t, d) => t + toDOP(deudaPend(d), d.moneda), 0);
   const meDeben = S.deudas.filter(d => d.tipo === 'medeben').reduce((t, d) => t + toDOP(deudaPend(d), d.moneda), 0);
@@ -144,8 +144,8 @@ document.addEventListener('click', e => {
   if (e.target.closest('[data-menu]') || e.target.closest('#menuBtn')) $('#sidebar').classList.toggle('open');
   else if (!e.target.closest('#sidebar')) $('#sidebar').classList.remove('open');
 });
-function go(v) { view = v; openRifa = null; location.hash = v; $('#sidebar').classList.remove('open'); render(); scrollTo({ top: 0, behavior: 'smooth' }); }
-window.addEventListener('hashchange', () => { const v = location.hash.slice(1); if (v.startsWith('sync=')) { initSyncLink(); return; } if (v && v !== view) { view = v; render(); } });
+function go(v) { view = v; openRifa = null; openInv = null; location.hash = v; $('#sidebar').classList.remove('open'); render(); scrollTo({ top: 0, behavior: 'smooth' }); }
+window.addEventListener('hashchange', () => { const v = location.hash.slice(1); if (v.startsWith('sync=')) { initSyncLink(); return; } if (v && v !== view) { view = v; openRifa = null; openInv = null; render(); } });
 $('#prevMonth').onclick = () => { curMonth = addMonths(curMonth, -1); render(); };
 $('#nextMonth').onclick = () => { curMonth = addMonths(curMonth, 1); render(); };
 $('#themeBtn').onclick = () => { S.settings.theme = S.settings.theme === 'dark' ? 'light' : 'dark'; save(); applyTheme(); render(); };
@@ -203,7 +203,7 @@ V.resumen = () => {
   <div class="grid g3 section-gap">
     <div class="card"><h3>🏦 Patrimonio neto</h3>
       <div class="stat"><div class="value ${nw.total >= 0 ? 'green' : 'red'}">${fmt(nw.total)}</div></div>
-      <div class="kv"><span>📈 Inversiones</span><b>${fmt(nw.inv)}</b></div>
+      <div class="kv"><span>📈 Inversiones (valor actual)</span><b>${fmt(nw.inv)}</b></div>
       <div class="kv"><span>🐷 Metas de ahorro</span><b>${fmt(nw.metas)}</b></div>
       <div class="kv"><span>🛟 Fondo de emergencia</span><b>${fmt(nw.fondo)}</b></div>
       <div class="kv"><span>💵 Efectivo / cuentas</span><b>${fmt(nw.ef)}</b></div>
@@ -218,8 +218,25 @@ V.resumen = () => {
       ${tips.map(([e, x]) => `<div class="tip"><span class="e">${e}</span><div>${x}</div></div>`).join('') || (!alerts.length ? empty('✨', 'Agrega movimientos y aquí te doy consejos') : '')}
       ${t.g ? `<div class="section-gap"><b class="small muted">¿Quién pagó este mes?</b>${Object.entries(byWho).filter(([, v]) => v).map(([k, v]) => `<div class="kv"><span>${k === 'warmi' ? '🧔 ' + esc(S.settings.nombre1) : k === 'yudith' ? '👩 ' + esc(S.settings.nombre2) : '👫 Ambos'}</span><b>${fmt(v)} · ${pct(v, t.g)}%</b></div>`).join('')}</div>` : ''}
     </div>
-  </div>`;
+  </div>
+  ${invWidget()}`;
 };
+function invWidget() {
+  if (!S.inversiones.length) return '';
+  const cs = S.inversiones.map(x => ({ x, c: invCalc(x) }));
+  const recs = cs.filter(({ c }) => c.estado === 'recuperada' || c.estado === 'cerrada-gan'), enRec = cs.filter(({ c }) => c.estado === 'recuperando');
+  const neta = cs.reduce((a, { x, c }) => a + toDOP(c.gananciaTotal, x.moneda), 0), falta = enRec.reduce((a, { x, c }) => a + toDOP(c.falta, x.moneda), 0);
+  const next = enRec.filter(({ c }) => c.fechaEst).sort((a, b) => a.c.fechaEst.localeCompare(b.c.fechaEst))[0];
+  return `<div class="card section-gap"><h3>📈 Tus inversiones <button class="btn sm" data-v="inversiones" data-go>Ver todo</button></h3>
+    <div class="grid g4">
+      <div class="stat"><div class="label">✅ Recuperadas</div><div class="value green">${recs.length}</div><div class="sub">de ${cs.length} inversiones</div></div>
+      <div class="stat"><div class="label">⏳ En recuperación</div><div class="value">${enRec.length}</div><div class="sub">Faltan ${fmt(falta)}</div></div>
+      <div class="stat"><div class="label">🏆 Ganancia neta total</div><div class="value ${neta >= 0 ? 'green' : 'red'}">${fmt(neta, { sign: true })}</div><div class="sub">Lo cobrado + valor actual − lo invertido</div></div>
+      <div class="stat"><div class="label">🔜 Próxima en recuperarse</div><div class="value" style="font-size:1.05rem">${next ? esc(next.x.nombre) : '—'}</div><div class="sub">${next ? `~${fmtDate(next.c.fechaEst)} · ${Math.round(next.c.p)}% listo` : 'Anota ganancias para proyectar'}</div></div>
+    </div>
+    ${enRec.slice(0, 3).map(({ x, c }) => `<div class="budget-item"><div class="budget-top"><span>${INV_TIPOS[x.tipo].split(' ')[0]} ${esc(x.nombre)}</span><span>${fmtRaw(c.recuperado, x.moneda)} / ${fmtRaw(c.capital, x.moneda)} · <b>${Math.round(c.p)}%</b></span></div><div class="progress warn"><div style="width:${Math.min(100, Math.max(0, c.p))}%"></div></div></div>`).join('')}
+  </div>`;
+}
 function catTop(m) {
   const cats = {}; inMonth(S.gastos, m).forEach(g => cats[g.categoria] = (cats[g.categoria] || 0) + toDOP(g.monto, g.moneda));
   const tot = Object.values(cats).reduce((a, b) => a + b, 0);
@@ -460,31 +477,150 @@ V.rifas.after = () => {
 };
 
 /* Inversiones */
+const MODO_MERCADO = ['certificado', 'acciones', 'cripto', 'coop'];
+const invModo = x => x.modo || (MODO_MERCADO.includes(x.tipo) ? 'mercado' : 'retornos');
+const MOV_TIPOS = { retorno: ['💵', 'Ganancia / retorno'], aporte: ['➕', 'Aporte adicional'], gasto: ['🧾', 'Gasto de la inversión'] };
+const monthsBetween = (a, b) => Math.max(0, (new Date(b + 'T00:00:00') - new Date(a + 'T00:00:00')) / (864e5 * 30.44));
+const addDays = (s, d) => { const t = new Date(s + 'T00:00:00'); t.setDate(t.getDate() + Math.round(d)); return `${t.getFullYear()}-${pad(t.getMonth() + 1)}-${pad(t.getDate())}`; };
+const fmtDate = s => s ? s.split('-').reverse().join('/') : '—';
+const durTxt = days => days < 45 ? `${Math.round(days)} días` : `${(days / 30.44).toFixed(1).replace('.0', '')} meses`;
+function invCalc(x) {
+  const mov = (x.mov || []).slice().sort((a, b) => (a.fecha || '').localeCompare(b.fecha || ''));
+  const inicial = num(x.invertido), aportes = mov.filter(m => m.tipo === 'aporte').reduce((a, m) => a + num(m.monto), 0);
+  const retornos = mov.filter(m => m.tipo === 'retorno').reduce((a, m) => a + num(m.monto), 0), gastos = mov.filter(m => m.tipo === 'gasto').reduce((a, m) => a + num(m.monto), 0);
+  const capital = inicial + aportes, cerrada = !!x.cerrada, final = cerrada ? num(x.cerrada.valor) : 0;
+  const recuperado = retornos - gastos + final, modo = invModo(x), actual = cerrada ? 0 : num(x.actual);
+  // fecha de recuperación: primer momento en que lo recuperado >= lo invertido
+  let cap = inicial, rec = 0, fechaRec = null;
+  const evs = mov.map(m => ({ f: m.fecha, t: m.tipo, v: num(m.monto) })); if (cerrada) evs.push({ f: x.cerrada.fecha, t: 'cierre', v: final });
+  evs.sort((a, b) => (a.f || '').localeCompare(b.f || '')).forEach(e => { if (e.t === 'aporte') cap += e.v; else if (e.t === 'gasto') rec -= e.v; else rec += e.v; if (!fechaRec && cap > 0 && rec >= cap && (e.t === 'retorno' || e.t === 'cierre')) fechaRec = e.f; });
+  if (fechaRec && rec < cap) fechaRec = null;
+  const recuperada = capital > 0 && recuperado >= capital;
+  const falta = Math.max(0, capital - recuperado), p = capital ? recuperado / capital * 100 : 0;
+  const inicio = x.fecha || (mov[0] && mov[0].fecha) || todayStr();
+  const mesesTransc = monthsBetween(inicio, cerrada ? x.cerrada.fecha : todayStr());
+  const promMes = retornos > 0 ? Math.round((retornos - gastos) / Math.max(1, mesesTransc)) : 0, esperado = num(x.esperadoMes);
+  const ritmo = promMes > 0 ? promMes : esperado, mesesFalta = !recuperada && !cerrada && ritmo > 0 ? falta / ritmo : null;
+  const valorTotal = recuperado + actual, gananciaTotal = valorTotal - capital;
+  let estado; if (cerrada) estado = recuperada ? 'cerrada-gan' : 'perdida'; else if (modo === 'mercado') estado = valorTotal >= capital ? 'mercado-gan' : 'mercado-per'; else estado = recuperada ? 'recuperada' : 'recuperando';
+  return { mov, inicial, aportes, retornos, gastos, capital, recuperado, falta, p, recuperada, fechaRec, diasRec: fechaRec ? monthsBetween(inicio, fechaRec) * 30.44 : null, inicio, mesesTransc, promMes, esperado, ritmo, mesesFalta, fechaEst: mesesFalta != null ? addDays(todayStr(), mesesFalta * 30.44) : null, actual, valorTotal, gananciaTotal, gananciaNeta: recuperado - capital, roi: capital ? (recuperado - capital) / capital * 100 : 0, roiTotal: capital ? gananciaTotal / capital * 100 : 0, modo, cerrada, estado };
+}
+const EST_CHIP = { recuperando: '<span class="chip warn">⏳ En recuperación</span>', recuperada: '<span class="chip ok">✅ Inversión recuperada</span>', 'cerrada-gan': '<span class="chip ok">🏁 Cerrada con ganancia</span>', perdida: '<span class="chip bad">📉 Con pérdida</span>', 'mercado-gan': '<span class="chip ok">📈 En ganancia</span>', 'mercado-per': '<span class="chip bad">📉 En pérdida</span>' };
+let openInv = null;
 function editInv(x = null) {
   form(x ? '✏️ Editar inversión' : '📈 Nueva inversión', [
-    { k: 'nombre', label: 'Nombre', req: true, full: true, ph: 'Ej: Certificado Banreservas, Cooperativa, BTC…' },
+    { k: 'nombre', label: 'Nombre', req: true, full: true, ph: 'Ej: Motor para delivery, Certificado, Servidor…' },
     { k: 'tipo', label: 'Tipo', type: 'select', options: INV_TIPOS }, monedaF,
-    { k: 'invertido', label: 'Monto invertido', type: 'number', req: true },
-    { k: 'actual', label: 'Valor actual', type: 'number', req: true },
-    { k: 'tasa', label: 'Tasa anual % (opcional)', type: 'number' },
+    { k: 'modo', label: '¿Cómo te da dinero?', type: 'select', full: true, options: { retornos: '💵 Me va dejando ganancias (negocio, motor, préstamo…) → mido cuándo recupero', mercado: '📈 Sube o baja de valor (certificado, acciones, cripto…)' }, def: x ? invModo(x) : 'retornos' },
+    { k: 'invertido', label: 'Monto invertido al inicio', type: 'number', req: true },
     { k: 'fecha', label: 'Fecha de inicio', type: 'date', def: todayStr() },
+    { k: 'esperadoMes', label: 'Ganancia esperada al mes (opcional)', type: 'number', ph: 'Para proyectar antes de tener ganancias' },
+    { k: 'actual', label: 'Valor actual del activo (si lo vendes hoy)', type: 'number', ph: '0 si no aplica' },
+    { k: 'tasa', label: 'Tasa anual % (opcional)', type: 'number' },
     { k: 'notas', label: 'Notas', type: 'textarea' }
-  ], x || {}, v => { if (x) Object.assign(x, v); else S.inversiones.push({ id: uid(), ...v }); toast('📈 Guardado'); },
+  ], x || {}, v => { if (x) Object.assign(x, v); else { const n = { id: uid(), mov: [], ...v }; S.inversiones.push(n); openInv = n.id; } toast('📈 Guardado'); },
   x ? '<button class="btn danger" id="delInv" style="margin-right:auto">🗑️ Borrar</button>' : '');
-  const d = $('#delInv'); if (d) d.onclick = () => confirmDo('Se borrará esta inversión.', () => { S.inversiones = S.inversiones.filter(i => i.id !== x.id); save(); render(); });
+  const d = $('#delInv'); if (d) d.onclick = () => confirmDo('Se borrará esta inversión con todo su historial.', () => { S.inversiones = S.inversiones.filter(i => i.id !== x.id); openInv = null; save(); render(); });
+}
+function editMov(x, m = null, tipo = 'retorno') {
+  const was = invCalc(x).recuperada;
+  form(m ? '✏️ Editar movimiento' : `${MOV_TIPOS[tipo][0]} ${MOV_TIPOS[tipo][1]}`, [
+    { k: 'tipo', label: 'Tipo', type: 'select', options: MOV_TIPOS, def: tipo, full: true },
+    { k: 'monto', label: `Monto (${x.moneda === 'USD' ? 'US$' : 'RD$'})`, type: 'number', req: true },
+    { k: 'fecha', label: 'Fecha', type: 'date', def: todayStr(), req: true },
+    { k: 'nota', label: 'Nota', ph: 'Ej: Semana del motor, pago de cliente…', full: true },
+    ...(m ? [] : [{ k: 'ingreso', label: '💰 Anotarlo también en Ingresos del mes (solo ganancias)', type: 'check', full: true }])
+  ], m || {}, v => {
+    const addIng = v.ingreso; delete v.ingreso;
+    x.mov = x.mov || [];
+    if (m) { Object.assign(m, v); const ing = S.ingresos.find(i => i.invMovId === m.id); if (ing) { if (m.tipo === 'retorno') Object.assign(ing, { monto: m.monto, fecha: m.fecha, moneda: x.moneda }); else S.ingresos = S.ingresos.filter(i => i !== ing); } }
+    else { const nm = { id: uid(), ...v }; x.mov.push(nm); if (addIng && v.tipo === 'retorno') S.ingresos.push({ id: uid(), invMovId: nm.id, fuente: 'inversiones', desc: `${x.nombre}${v.nota ? ' — ' + v.nota : ''}`, monto: v.monto, moneda: x.moneda, fecha: v.fecha, quien: 'warmi' }); }
+    const c = invCalc(x);
+    if (!was && c.recuperada && c.modo === 'retornos') { setTimeout(() => { confetti(); toast('✅ ¡Inversión recuperada! Lo que entre ahora es ganancia 🎉'); }, 250); }
+    else toast(v.tipo === 'retorno' ? `💵 Anotado. ${c.falta > 0 ? 'Faltan ' + fmtRaw(c.falta, x.moneda) : ''}` : '✓ Anotado');
+  }, m ? '<button class="btn danger" id="delMov" style="margin-right:auto">🗑️ Borrar</button>' : '');
+  const d = $('#delMov'); if (d) d.onclick = () => confirmDo('Se borrará este movimiento.', () => { x.mov = x.mov.filter(y => y.id !== m.id); S.ingresos = S.ingresos.filter(i => i.invMovId !== m.id); save(); render(); });
+}
+function closeInv(x) {
+  const c = invCalc(x);
+  form('🏁 Cerrar inversión', [
+    { k: 'valor', label: `Valor final que recibiste al cerrar/vender (${x.moneda})`, type: 'number', req: true, def: c.actual || 0 },
+    { k: 'fecha', label: 'Fecha de cierre', type: 'date', req: true, def: todayStr() },
+    { k: 'nota', label: 'Nota', full: true }
+  ], x.cerrada || {}, v => { const was = c.recuperada; x.cerrada = v; const n = invCalc(x); if (!was && n.recuperada) setTimeout(confetti, 250); toast(n.gananciaNeta >= 0 ? `🏁 Cerrada con ganancia de ${fmtRaw(n.gananciaNeta, x.moneda)}` : `📉 Cerrada con pérdida de ${fmtRaw(-n.gananciaNeta, x.moneda)}`); });
+}
+function invCard(x) {
+  const c = invCalc(x), cur = x.moneda, ret = c.modo === 'retornos' || c.cerrada;
+  const pp = ret ? c.p : (c.capital ? c.valorTotal / c.capital * 100 : 0);
+  return `<div class="card rifa-card" data-inv="${x.id}"><h3><span>${INV_TIPOS[x.tipo].split(' ')[0]} ${esc(x.nombre)}</span>${EST_CHIP[c.estado]}</h3>
+    <p class="muted small" style="margin:0 0 10px">${INV_TIPOS[x.tipo].slice(2)} · desde ${fmtDate(c.inicio)}${x.tasa ? ` · ${x.tasa}% anual` : ''}</p>
+    <div class="budget-top"><span>${ret ? `Recuperado ${fmtRaw(c.recuperado, cur)} de ${fmtRaw(c.capital, cur)}` : `Vale ${fmtRaw(c.valorTotal, cur)} de ${fmtRaw(c.capital, cur)}`}</span><b>${Math.round(pp)}%</b></div>
+    <div class="progress ${c.estado === 'perdida' || c.estado === 'mercado-per' ? 'bad' : pp >= 100 ? 'ok' : 'warn'}"><div style="width:${Math.min(100, Math.max(0, pp))}%"></div></div>
+    ${ret && !c.recuperada && !c.cerrada ? `<div class="kv section-gap"><span>Falta por recuperar</span><b class="red">${fmtRaw(c.falta, cur)}</b></div>${c.mesesFalta != null ? `<div class="kv"><span>A este ritmo</span><b>~${durTxt(c.mesesFalta * 30.44)} (${fmtDate(c.fechaEst)})</b></div>` : ''}` : ''}
+    ${ret && (c.recuperada || c.cerrada) ? `<div class="kv section-gap"><span>Ganancia neta</span><b class="${c.gananciaNeta >= 0 ? 'green' : 'red'}">${fmtRaw(c.gananciaNeta, cur)} · ${c.roi.toFixed(0)}%</b></div>${c.fechaRec ? `<div class="kv"><span>Recuperada el</span><b>${fmtDate(c.fechaRec)} (${durTxt(c.diasRec)})</b></div>` : ''}` : ''}
+    ${!ret ? `<div class="kv section-gap"><span>Ganancia</span><b class="${c.gananciaTotal >= 0 ? 'green' : 'red'}">${fmtRaw(c.gananciaTotal, cur)} · ${c.roiTotal.toFixed(1)}%</b></div>` : ''}
+    <div class="btn-row section-gap">${!c.cerrada ? `<button class="btn sm success" data-ret="${x.id}">💵 Anotar ganancia</button>` : ''}<button class="btn sm" data-inv-open="${x.id}">Ver detalle ›</button></div></div>`;
+}
+function invDetail(x) {
+  const c = invCalc(x), cur = x.moneda, ret = c.modo === 'retornos' || c.cerrada;
+  const big = ret ? c.p : (c.capital ? c.valorTotal / c.capital * 100 : 0);
+  return `<div class="page-head"><div><button class="btn sm" id="backInv">‹ Inversiones</button><h1 class="page-title" style="margin-top:8px">${INV_TIPOS[x.tipo].split(' ')[0]} ${esc(x.nombre)} ${EST_CHIP[c.estado]}</h1><p class="muted">${INV_TIPOS[x.tipo].slice(2)} · desde ${fmtDate(c.inicio)} (${durTxt(c.mesesTransc * 30.44)})${x.notas ? ' · ' + esc(x.notas) : ''}</p></div>
+  <div class="btn-row">${!c.cerrada ? `<button class="btn success" data-addmov="retorno">💵 Anotar ganancia</button><button class="btn" data-addmov="aporte">➕ Aporte</button><button class="btn" data-addmov="gasto">🧾 Gasto</button>${c.modo === 'mercado' ? '<button class="btn" id="updVal">🔄 Valor actual</button>' : ''}<button class="btn" id="closeInv">🏁 Cerrar</button>` : '<button class="btn" id="reopenInv">↩️ Reabrir</button>'}<button class="btn" id="editInvBtn">✏️</button></div></div>
+  <div class="card stat ${c.recuperada ? 'hero' : ''}">
+    <div class="label">${ret ? (c.recuperada ? '✅ ¡Inversión recuperada!' : c.cerrada ? '📉 Cerrada sin recuperar todo' : '⏳ Recuperando lo invertido') : '📈 Valor de la inversión'}</div>
+    <div class="value">${ret ? (c.recuperada ? `+${fmtRaw(c.gananciaNeta, cur)} de ganancia` : c.cerrada ? `Perdiste ${fmtRaw(-c.gananciaNeta, cur)}` : `Faltan ${fmtRaw(c.falta, cur)}`) : `${fmtRaw(c.valorTotal, cur)}`}</div>
+    <div class="progress ${c.estado === 'perdida' || c.estado === 'mercado-per' ? 'bad' : big >= 100 ? 'ok' : 'warn'}" style="height:18px;margin:10px 0;${c.recuperada ? 'background:rgba(255,255,255,.25);border:none' : ''}"><div style="width:${Math.min(100, Math.max(0, big))}%;${c.recuperada ? 'background:#fff' : ''}"></div></div>
+    <div class="sub"><b>${Math.round(big)}%</b> ${ret ? `recuperado (${fmtRaw(c.recuperado, cur)} de ${fmtRaw(c.capital, cur)})` : `del capital (${fmtRaw(c.capital, cur)})`}
+    ${ret && !c.recuperada && !c.cerrada ? (c.mesesFalta != null ? ` · ${c.promMes > 0 ? 'a este ritmo' : 'con la ganancia esperada'} recuperas en <b>~${durTxt(c.mesesFalta * 30.44)}</b>, aprox. el <b>${fmtDate(c.fechaEst)}</b>` : ' · Anota ganancias (o una ganancia esperada al mes) para calcular cuándo recuperas') : ''}
+    ${c.recuperada && c.fechaRec ? ` · Recuperada el <b>${fmtDate(c.fechaRec)}</b>, tomó <b>${durTxt(c.diasRec)}</b>` : ''}</div>
+  </div>
+  <div class="grid g4 section-gap">
+    ${stat('💸 Total invertido', fmtRaw(c.capital, cur), `Inicial ${fmtRaw(c.inicial, cur)}${c.aportes ? ` + aportes ${fmtRaw(c.aportes, cur)}` : ''}`)}
+    ${stat('💵 Ganancias cobradas', `<span class="green">${fmtRaw(c.retornos, cur)}</span>`, c.gastos ? `Gastos: -${fmtRaw(c.gastos, cur)}` : 'Sin gastos')}
+    ${stat('📊 Promedio al mes', fmtRaw(c.promMes, cur), c.esperado ? `Esperado: ${fmtRaw(c.esperado, cur)}/mes` : '')}
+    ${ret && !c.recuperada && !c.cerrada ? stat('💼 Si lo vendes hoy', `<span class="${c.gananciaTotal >= 0 ? 'green' : 'red'}">${fmtRaw(c.gananciaTotal, cur)}</span>`, c.actual ? `Cobrado ${fmtRaw(c.recuperado, cur)} + activo ${fmtRaw(c.actual, cur)} − invertido` : 'Pon el valor del activo en ✏️ para calcularlo') : stat(ret ? '🏆 ROI' : '🏆 Rendimiento', `<span class="${(ret ? c.roi : c.roiTotal) >= 0 ? 'green' : 'red'}">${(ret ? c.roi : c.roiTotal).toFixed(1)}%</span>`, c.actual ? `Valor del activo hoy: ${fmtRaw(c.actual, cur)} · total ${fmtRaw(c.gananciaTotal, cur)}` : '')}
+  </div>
+  ${c.cerrada ? `<div class="tip section-gap"><span class="e">🏁</span><div>Cerrada el <b>${fmtDate(x.cerrada.fecha)}</b> con valor final de <b>${fmtRaw(x.cerrada.valor, cur)}</b>${x.cerrada.nota ? ' · ' + esc(x.cerrada.nota) : ''}.</div></div>` : ''}
+  <div class="grid g3 section-gap">
+    <div class="card" style="grid-column:span 2"><h3>📒 Historial de movimientos</h3>${c.mov.length ? `<div class="list">${c.mov.slice().reverse().map(m => `<div class="row"><div class="ic">${MOV_TIPOS[m.tipo][0]}</div><div class="info"><b>${esc(m.nota || MOV_TIPOS[m.tipo][1])}</b><small>${fmtDate(m.fecha)} · ${MOV_TIPOS[m.tipo][1]}${S.ingresos.some(i => i.invMovId === m.id) ? ' · 💰 en ingresos' : ''}</small></div><div class="amt ${m.tipo === 'retorno' ? 'green' : m.tipo === 'gasto' ? 'red' : ''}">${m.tipo === 'gasto' ? '-' : '+'}${fmtRaw(m.monto, cur)}</div><div class="acts"><button data-edmov="${m.id}" title="Editar">✏️</button></div></div>`).join('')}</div>` : empty('📒', 'Aquí van las ganancias que te va dejando, los aportes extra y los gastos.', !c.cerrada ? '<button class="btn success" data-addmov="retorno">💵 Anotar primera ganancia</button>' : '')}</div>
+    <div class="card"><h3>📈 Recuperación en el tiempo</h3><div class="chart-box">${c.mov.length ? '<canvas id="cInvRec"></canvas>' : empty('📈', 'Sin movimientos')}</div></div>
+  </div>`;
 }
 V.inversiones = () => {
-  const inv = S.inversiones.reduce((a, x) => a + toDOP(x.invertido, x.moneda), 0), act = S.inversiones.reduce((a, x) => a + toDOP(x.actual, x.moneda), 0), g = act - inv;
-  return `<div class="page-head"><div><h1 class="page-title">📈 Inversiones</h1><p class="muted">Pon tus cuartos a trabajar</p></div><button class="btn primary" id="addInv">➕ Nueva inversión</button></div>
-  <div class="grid g3">${stat('💸 Total invertido', fmt(inv))}${stat('💎 Valor actual', fmt(act), '', 'hero')}${stat('📊 Ganancia / pérdida', `<span class="${g >= 0 ? 'green' : 'red'}">${fmt(g, { sign: true })}</span>`, `${inv ? (g / inv * 100).toFixed(1) : 0}%`)}</div>
-  <div class="grid g3 section-gap"><div class="card" style="grid-column:span 2"><h3>💼 Portafolio</h3>${S.inversiones.length ? `<div class="list">${S.inversiones.map(x => { const gg = num(x.actual) - num(x.invertido), p = num(x.invertido) ? gg / num(x.invertido) * 100 : 0; return `<div class="row"><div class="ic">${INV_TIPOS[x.tipo].split(' ')[0]}</div><div class="info"><b>${esc(x.nombre)}</b><small>${INV_TIPOS[x.tipo].slice(2)} · invertido ${fmtRaw(x.invertido, x.moneda)} ${x.tasa ? `· ${x.tasa}% anual` : ''}</small></div><div class="amt">${fmtRaw(x.actual, x.moneda)}<br><small class="${gg >= 0 ? 'green' : 'red'}">${gg >= 0 ? '▲' : '▼'} ${p.toFixed(1)}%</small></div><div class="acts" style="flex-direction:column"><button data-upd="${x.id}" title="Actualizar valor">🔄</button><button data-edi="${x.id}" title="Editar">✏️</button></div></div>`; }).join('')}</div>` : empty('📈', 'Agrega tus certificados, cooperativa, cripto o negocio')}</div>
-  <div class="card"><h3>🥧 Distribución</h3><div class="chart-box">${S.inversiones.length ? '<canvas id="cInv"></canvas>' : empty('🥧', 'Sin datos')}</div></div></div>`;
+  if (openInv) { const x = S.inversiones.find(i => i.id === openInv); if (x) return invDetail(x); openInv = null; }
+  const cs = S.inversiones.map(x => ({ x, c: invCalc(x) }));
+  const cap = cs.reduce((a, { x, c }) => a + toDOP(c.capital, x.moneda), 0), val = cs.reduce((a, { x, c }) => a + toDOP(c.valorTotal, x.moneda), 0);
+  const falta = cs.filter(({ c }) => c.estado === 'recuperando').reduce((a, { x, c }) => a + toDOP(c.falta, x.moneda), 0);
+  const rec = cs.filter(({ c }) => c.estado === 'recuperada' || c.estado === 'cerrada-gan').length;
+  const order = { recuperando: 0, 'mercado-per': 1, 'mercado-gan': 2, recuperada: 3, 'cerrada-gan': 4, perdida: 5 };
+  return `<div class="page-head"><div><h1 class="page-title">📈 Inversiones</h1><p class="muted">Anota lo que te va dejando cada inversión y te digo cuándo la recuperas</p></div><button class="btn primary" id="addInv">➕ Nueva inversión</button></div>
+  <div class="grid g4">${stat('💸 Total invertido', fmt(cap))}${stat('💎 Recuperado + valor actual', fmt(val), '', 'hero')}${stat('📊 Ganancia / pérdida total', `<span class="${val - cap >= 0 ? 'green' : 'red'}">${fmt(val - cap, { sign: true })}</span>`, `${cap ? ((val - cap) / cap * 100).toFixed(1) : 0}%`)}${stat('⏳ Falta por recuperar', `<span class="red">${fmt(falta)}</span>`, `${rec} recuperada(s) · ${cs.filter(({ c }) => c.estado === 'recuperando').length} en recuperación`)}</div>
+  <div class="grid g3 section-gap">${cs.length ? cs.sort((a, b) => order[a.c.estado] - order[b.c.estado]).map(({ x }) => invCard(x)).join('') : `<div class="card" style="grid-column:1/-1">${empty('📈', 'Agrega tu negocio, motor, certificado, cooperativa o cripto. Luego anota lo que te va dejando.', '<button class="btn primary" id="addInv2">➕ Nueva inversión</button>')}</div>`}</div>
+  ${cs.length ? `<div class="grid g3 section-gap"><div class="card"><h3>🥧 Distribución</h3><div class="chart-box"><canvas id="cInv"></canvas></div></div></div>` : ''}`;
 };
 V.inversiones.after = () => {
-  $('#addInv').onclick = () => editInv();
-  document.querySelectorAll('[data-edi]').forEach(b => b.onclick = () => editInv(S.inversiones.find(x => x.id === b.dataset.edi)));
-  document.querySelectorAll('[data-upd]').forEach(b => b.onclick = () => { const x = S.inversiones.find(i => i.id === b.dataset.upd); form(`🔄 Valor actual de ${esc(x.nombre)}`, [{ k: 'actual', label: `Valor actual (${x.moneda})`, type: 'number', req: true }], x, v => { x.actual = v.actual; toast('🔄 Actualizado'); }); });
-  if (S.inversiones.length) { const by = {}; S.inversiones.forEach(x => by[x.tipo] = (by[x.tipo] || 0) + toDOP(x.actual, x.moneda)); const e = Object.entries(by); chart('cInv', { type: 'doughnut', data: { labels: e.map(([k]) => INV_TIPOS[k]), datasets: [{ data: e.map(x => toView(x[1])), backgroundColor: PALETTE, borderWidth: 0 }] }, options: { maintainAspectRatio: false, cutout: '60%', plugins: { legend: { position: 'bottom', labels: { boxWidth: 10 } }, tooltip: { callbacks: { label: c => ' ' + fmt(e[c.dataIndex][1]) } } } } }); }
+  ['#addInv', '#addInv2'].forEach(s => { const b = $(s); if (b) b.onclick = () => editInv(); });
+  document.querySelectorAll('[data-ret]').forEach(b => b.onclick = e => { e.stopPropagation(); editMov(S.inversiones.find(x => x.id === b.dataset.ret), null, 'retorno'); });
+  document.querySelectorAll('[data-inv]').forEach(c => c.onclick = () => { openInv = c.dataset.inv; render(); scrollTo({ top: 0 }); });
+  if (!openInv) {
+    if (S.inversiones.length) { const by = {}; S.inversiones.forEach(x => by[x.tipo] = (by[x.tipo] || 0) + toDOP(invCalc(x).capital, x.moneda)); const e = Object.entries(by); chart('cInv', { type: 'doughnut', data: { labels: e.map(([k]) => INV_TIPOS[k]), datasets: [{ data: e.map(x => toView(x[1])), backgroundColor: PALETTE, borderWidth: 0 }] }, options: { maintainAspectRatio: false, cutout: '60%', plugins: { legend: { position: 'bottom', labels: { boxWidth: 10 } }, tooltip: { callbacks: { label: c => ' ' + fmt(e[c.dataIndex][1]) } } } } }); }
+    return;
+  }
+  const x = S.inversiones.find(i => i.id === openInv); if (!x) return;
+  const c = invCalc(x);
+  $('#backInv').onclick = () => { openInv = null; render(); };
+  $('#editInvBtn').onclick = () => editInv(x);
+  document.querySelectorAll('[data-addmov]').forEach(b => b.onclick = () => editMov(x, null, b.dataset.addmov));
+  document.querySelectorAll('[data-edmov]').forEach(b => b.onclick = () => editMov(x, x.mov.find(m => m.id === b.dataset.edmov)));
+  const cl = $('#closeInv'); if (cl) cl.onclick = () => closeInv(x);
+  const ro = $('#reopenInv'); if (ro) ro.onclick = () => confirmDo('La inversión vuelve a estar activa (se quita el valor final).', () => { delete x.cerrada; save(); render(); });
+  const uv = $('#updVal'); if (uv) uv.onclick = () => form(`🔄 Valor actual de ${esc(x.nombre)}`, [{ k: 'actual', label: `Valor actual (${x.moneda})`, type: 'number', req: true }], x, v => { x.actual = v.actual; toast('🔄 Actualizado'); });
+  if (c.mov.length) {
+    let cap = c.inicial, r = 0; const pts = [{ f: c.inicio, cap, r }];
+    c.mov.forEach(m => { if (m.tipo === 'aporte') cap += num(m.monto); else if (m.tipo === 'gasto') r -= num(m.monto); else r += num(m.monto); pts.push({ f: m.fecha, cap, r }); });
+    if (c.cerrada) pts.push({ f: x.cerrada.fecha, cap, r: r + num(x.cerrada.valor) });
+    chart('cInvRec', { type: 'line', data: { labels: pts.map(p => fmtDate(p.f).slice(0, 5)), datasets: [{ label: 'Recuperado', data: pts.map(p => p.r), borderColor: '#22c55e', backgroundColor: 'rgba(34,197,94,.15)', fill: true, tension: .3 }, { label: 'Invertido', data: pts.map(p => p.cap), borderColor: '#f43f5e', borderDash: [6, 4], pointRadius: 0, stepped: true }] }, options: { maintainAspectRatio: false, plugins: { legend: { position: 'bottom' } }, scales: { y: { ticks: { callback: v => Number(v).toLocaleString('es-DO', { notation: 'compact' }) } } } } });
+  }
 };
 
 /* Metas + fondo de emergencia */
@@ -612,11 +748,15 @@ function loadDemo() {
     { id: uid(), nombre: 'VPS servidor (ejemplo)', tipo: 'suscripcion', categoria: 'hosting', monto: 25, moneda: 'USD', dia: 3, quien: 'warmi', activo: true, pagados: [m0] },
     { id: uid(), nombre: 'Dominio web (ejemplo)', tipo: 'suscripcion', categoria: 'hosting', monto: 1.5, moneda: 'USD', dia: 24, quien: 'warmi', activo: true, pagados: [] }
   ];
+  const mv = (tipo, k, day, monto, nota) => ({ id: uid(), tipo, fecha: dd(k, day), monto, nota });
   d.inversiones = [
-    { id: uid(), nombre: 'Certificado financiero (ejemplo)', tipo: 'certificado', invertido: 100000, actual: 108500, moneda: 'DOP', tasa: 9, fecha: dd(-10, 1) },
-    { id: uid(), nombre: 'Cooperativa (ejemplo)', tipo: 'coop', invertido: 35000, actual: 37800, moneda: 'DOP', tasa: 8, fecha: dd(-8, 1) },
-    { id: uid(), nombre: 'Bitcoin (ejemplo)', tipo: 'cripto', invertido: 300, actual: 365, moneda: 'USD', fecha: dd(-6, 1) },
-    { id: uid(), nombre: 'Equipo para el negocio (ejemplo)', tipo: 'negocio', invertido: 25000, actual: 25000, moneda: 'DOP', fecha: dd(-4, 1) }
+    { id: uid(), nombre: 'Motor para delivery (ejemplo)', tipo: 'negocio', modo: 'retornos', invertido: 85000, actual: 60000, moneda: 'DOP', fecha: dd(-4, 3), esperadoMes: 8000, notas: 'Lo trabaja un muchacho y me deja la cuota semanal',
+      mov: [mv('retorno', -3, 5, 7500, 'Cuotas del mes'), mv('retorno', -2, 5, 8200, 'Cuotas del mes'), mv('gasto', -2, 18, 2500, 'Gomas nuevas'), mv('retorno', -1, 5, 7800, 'Cuotas del mes'), mv('retorno', 0, 5, 8000, 'Cuotas del mes')] },
+    { id: uid(), nombre: 'Servidor Conquer (ejemplo)', tipo: 'negocio', modo: 'retornos', invertido: 30000, actual: 0, moneda: 'DOP', fecha: dd(-8, 1), esperadoMes: 5000,
+      mov: [mv('retorno', -7, 1, 4500, 'Donaciones'), mv('retorno', -6, 1, 6200, 'Donaciones'), mv('aporte', -6, 10, 5000, 'VPS más grande'), mv('retorno', -5, 1, 7000, 'Donaciones'), mv('retorno', -4, 1, 8300, 'Donaciones'), mv('retorno', -3, 1, 9100, 'Donaciones'), mv('retorno', -2, 1, 7600, 'Donaciones'), mv('retorno', -1, 1, 8800, 'Donaciones')] },
+    { id: uid(), nombre: 'Certificado financiero (ejemplo)', tipo: 'certificado', modo: 'mercado', invertido: 100000, actual: 104500, moneda: 'DOP', tasa: 9, fecha: dd(-10, 1), mov: [mv('retorno', -4, 1, 2200, 'Intereses pagados')] },
+    { id: uid(), nombre: 'Cooperativa (ejemplo)', tipo: 'coop', modo: 'mercado', invertido: 35000, actual: 37800, moneda: 'DOP', tasa: 8, fecha: dd(-8, 1), mov: [] },
+    { id: uid(), nombre: 'Bitcoin (ejemplo)', tipo: 'cripto', modo: 'mercado', invertido: 300, actual: 0, moneda: 'USD', fecha: dd(-9, 1), mov: [], cerrada: { valor: 240, fecha: dd(-2, 12), nota: 'Vendí para salir' } }
   ];
   d.metas = [
     { id: uid(), emoji: '🏠', nombre: 'Inicial de la casa (ejemplo)', objetivo: 600000, ahorrado: 145000, moneda: 'DOP', fecha: `${+m0.slice(0, 4) + 2}-12-31` },
@@ -682,6 +822,12 @@ function stamp(prev, cur) {
         Object.entries(x.numeros).forEach(([n, v]) => { if (!pn[n] || sigItem(pn[n]) !== sigItem(v)) v.u = now; });
         Object.keys(pn).forEach(n => { if (!x.numeros[n]) x.numDel[n] = now; });
       }
+      if (c === 'inversiones') {
+        x.mov = x.mov || []; x.movDel = Object.assign({}, (p && p.movDel) || {}, x.movDel || {});
+        const pmv = new Map(((p && p.mov) || []).map(m => [m.id, m])), mids = new Set();
+        x.mov.forEach(m => { mids.add(m.id); const q = pmv.get(m.id); if (!q || sigItem(q) !== sigItem(m)) m.u = now; });
+        pmv.forEach((_, id) => { if (!mids.has(id)) x.movDel[id] = now; });
+      }
     });
     pm.forEach((_, id) => { if (!ids.has(id)) cur.deleted[id] = now; });
   });
@@ -705,6 +851,12 @@ function mergeStates(a, b) {
           if (!(nd[n] && nd[n] >= (win.u || 0))) nums[n] = clone(win);
         });
         w.numeros = nums; w.numDel = nd;
+      }
+      if (c === 'inversiones') {
+        const md = Object.assign({}, y.movDel || {}); Object.entries(x.movDel || {}).forEach(([k, v]) => md[k] = Math.max(v, md[k] || 0));
+        const mm = new Map(); [...(x.mov || []), ...(y.mov || [])].forEach(m => { const o = mm.get(m.id); if (!o || (m.u || 0) > (o.u || 0)) mm.set(m.id, clone(m)); });
+        w.mov = [...mm.values()].filter(m => !(md[m.id] && md[m.id] >= (m.u || 0))).sort((a, b) => (a.fecha || '').localeCompare(b.fecha || '') || (a.u || 0) - (b.u || 0));
+        w.movDel = md;
       }
       map.set(y.id, w);
     });
