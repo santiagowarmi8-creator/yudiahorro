@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Yudiahorro 💸</title>
+<meta name="theme-color" content="#0f172a">
+<meta name="robots" content="noindex, nofollow">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>💸</text></svg>">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="styles.css">
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+</head>
+<body>
+<div id="lock" class="lock hidden">
+  <div class="lock-card">
+    <div class="lock-emoji">🔒</div>
+    <h2>Yudiahorro</h2>
+    <p class="muted">Ingresa tu PIN</p>
+    <div class="pin-dots" id="pinDots"></div>
+    <div class="pin-pad" id="pinPad"></div>
+    <p class="muted small">El PIN es solo una comodidad en este navegador, no es seguridad real.</p>
+  </div>
+</div>
+
+<header class="topbar">
+  <button class="icon-btn only-mobile" id="menuBtn" aria-label="Menú">☰</button>
+  <div class="brand"><span class="brand-logo">💸</span><div><strong>Yudiahorro</strong><small id="hello">Warmi & Yudith</small></div></div>
+  <div class="top-actions">
+    <div class="month-picker">
+      <button class="icon-btn" id="prevMonth" aria-label="Mes anterior">‹</button>
+      <span id="monthLabel"></span>
+      <button class="icon-btn" id="nextMonth" aria-label="Mes siguiente">›</button>
+    </div>
+    <button class="icon-btn" id="themeBtn" title="Tema claro/oscuro">🌙</button>
+  </div>
+</header>
+
+<div class="layout">
+  <nav class="sidebar" id="sidebar"></nav>
+  <main id="main"></main>
+</div>
+<nav class="bottom-nav only-mobile" id="bottomNav"></nav>
+
+<div class="modal-bg hidden" id="modalBg"><div class="modal" id="modal"></div></div>
+<div class="toast" id="toast"></div>
+<canvas id="confetti"></canvas>
+
+<script src="app.js"></script>
+</body>
+</html>
