@@ -21,7 +21,7 @@ const GASTO_CATS = {
 };
 const INGRESO_SRCS = {
   salario:['💼','Salario / Sueldo'], fluye:['🌊','Fluye (suscripciones PayPal)'], conquer:['⚔️','Servidor Conquer'], youtube:['▶️','YouTube / Facebook / Redes'],
-  rifas:['🎟️','Rifas de Yudith'], inversiones:['📈','Inversiones / Retornos'], ventas:['🛍️','Ventas / Negocio'], remesas:['💌','Remesas'], freelance:['🧑‍💻','Trabajos / Freelance'], otros:['✨','Otros']
+  rifas:['🎟️','Rifas de Yudith'], inversiones:['📈','Inversiones / Retornos'], megaclientes:['💎','MegaClientes'], ventas:['🛍️','Ventas / Negocio'], remesas:['💌','Remesas'], freelance:['🧑‍💻','Trabajos / Freelance'], otros:['✨','Otros']
 };
 const INV_TIPOS = {coop:'🤝 Cooperativa', certificado:'🏛️ Certificado financiero / Banco', acciones:'📈 Acciones / Bolsa', cripto:'🪙 Cripto', negocio:'💼 Negocio propio', inmueble:'🏡 Inmueble / Solar', otro:'✨ Otro'};
 const DEUDA_TIPOS = {prestamo:'🏦 Préstamo', tarjeta:'💳 Tarjeta de crédito', san:'🤝 San / Sociedad', personal:'🙋 Préstamo personal', medeben:'💰 Me deben (yo presté)'};
@@ -32,7 +32,7 @@ const MONTHS = ['enero','febrero','marzo','abril','mayo','junio','julio','agosto
 const blank = () => ({
   version: 1,
   settings: { nombre1: 'Warmi', nombre2: 'Yudith', moneda: 'DOP', tasa: 63, theme: 'dark', pin: '', efectivo: 0, fondoMeses: 6, fondoAhorrado: 0, ejemplo: false },
-  ingresos: [], gastos: [], presupuestos: {}, inversiones: [], rifas: [], metas: [], deudas: [], pagos: []
+  ingresos: [], gastos: [], presupuestos: {}, inversiones: [], rifas: [], metas: [], deudas: [], pagos: [], modelos: [], mcPagos: []
 });
 let S;
 try { S = Object.assign(blank(), JSON.parse(localStorage.getItem(KEY) || 'null') || {}); S.settings = Object.assign(blank().settings, S.settings); }
@@ -129,7 +129,7 @@ const monedaF = { k: 'moneda', label: 'Moneda', type: 'select', options: { DOP: 
 /* ---------- Navegación ---------- */
 const NAV = [
   ['resumen', '🏠', 'Resumen'], ['ingresos', '💰', 'Ingresos'], ['gastos', '🧾', 'Gastos'], ['presupuesto', '🎯', 'Presupuesto'],
-  ['pagos', '📅', 'Pagos y calendario'], ['rifas', '🎟️', 'Rifas de Yudith'], ['inversiones', '📈', 'Inversiones'], ['metas', '🐷', 'Metas y emergencia'],
+  ['pagos', '📅', 'Pagos y calendario'], ['rifas', '🎟️', 'Rifas de Yudith'], ['megaclientes', '💎', 'MegaClientes'], ['inversiones', '📈', 'Inversiones'], ['metas', '🐷', 'Metas y emergencia'],
   ['deudas', '🤝', 'Deudas y sanes'], ['ajustes', '⚙️', 'Ajustes y respaldo']
 ];
 function renderNav() {
@@ -166,7 +166,7 @@ const moneyTick = v => fmt(v);
 const V = {};
 const empty = (emoji, txt, btn = '') => `<div class="empty"><span class="big">${emoji}</span>${txt}${btn ? `<div style="margin-top:12px">${btn}</div>` : ''}</div>`;
 const stat = (label, value, sub = '', cls = '') => `<div class="card stat ${cls}"><div class="label">${label}</div><div class="value">${value}</div><div class="sub">${sub}</div></div>`;
-const isEmpty = () => !S.ingresos.length && !S.gastos.length && !S.rifas.length && !S.inversiones.length && !S.metas.length && !S.deudas.length && !S.pagos.length;
+const isEmpty = () => !S.ingresos.length && !S.gastos.length && !S.rifas.length && !S.inversiones.length && !S.metas.length && !S.deudas.length && !S.pagos.length && !S.modelos.length && !S.mcPagos.length;
 
 V.resumen = () => {
   const t = totals(curMonth), prev = totals(addMonths(curMonth, -1)), nw = netWorth();
@@ -219,6 +219,7 @@ V.resumen = () => {
       ${t.g ? `<div class="section-gap"><b class="small muted">¿Quién pagó este mes?</b>${Object.entries(byWho).filter(([, v]) => v).map(([k, v]) => `<div class="kv"><span>${k === 'warmi' ? '🧔 ' + esc(S.settings.nombre1) : k === 'yudith' ? '👩 ' + esc(S.settings.nombre2) : '👫 Ambos'}</span><b>${fmt(v)} · ${pct(v, t.g)}%</b></div>`).join('')}</div>` : ''}
     </div>
   </div>
+  ${mcWidget()}
   ${invWidget()}`;
 };
 function invWidget() {
@@ -623,6 +624,108 @@ V.inversiones.after = () => {
   }
 };
 
+/* MegaClientes: el cliente paga el 100%, a mí me toca un % (por defecto 40) */
+const mcMine = p => Math.round(num(p.monto) * num(p.pct) / 100 * 100) / 100;
+const mcModelo = id => S.modelos.find(m => m.id === id);
+const mcModeloName = p => (mcModelo(p.modeloId) || {}).nombre || p.modeloNombre || 'Sin modelo';
+const weekStart = () => { const d = new Date(); const k = (d.getDay() + 6) % 7; d.setDate(d.getDate() - k); return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`; };
+const mcSum = arr => arr.reduce((a, p) => { a.total += toDOP(p.monto, p.moneda); a.mio += toDOP(mcMine(p), p.moneda); a.n++; return a; }, { total: 0, mio: 0, n: 0 });
+let mcTab = 'pagos', mcFilt = { modelo: '', q: '' };
+function editModelo(x = null) {
+  form(x ? '✏️ Editar modelo' : '👤 Nueva modelo', [
+    { k: 'nombre', label: 'Nombre', req: true, full: true, ph: 'Nombre o apodo' },
+    { k: 'pct', label: 'Mi parte (%) por defecto', type: 'number', req: true, def: 40 },
+    { k: 'tel', label: 'Teléfono (opcional)', type: 'tel' },
+    { k: 'notas', label: 'Notas', type: 'textarea' },
+    { k: 'activa', label: '✅ Activa', type: 'check', def: true, full: true }
+  ], x || {}, v => { v.pct = Math.max(0, Math.min(100, v.pct)); if (x) Object.assign(x, v); else S.modelos.push({ id: uid(), ...v }); toast('👤 Guardado'); },
+  x ? '<button class="btn danger" id="delModelo" style="margin-right:auto">🗑️ Borrar</button>' : '');
+  const d = $('#delModelo'); if (d) d.onclick = () => confirmDo('Se borra la modelo de la lista. Los pagos ya anotados se quedan con su nombre.', () => { S.mcPagos.forEach(p => { if (p.modeloId === x.id) p.modeloNombre = x.nombre; }); S.modelos = S.modelos.filter(m => m.id !== x.id); save(); render(); });
+}
+function editMcPago(x = null) {
+  const mods = S.modelos.filter(m => m.activa !== false || (x && m.id === x.modeloId));
+  const first = mods[0];
+  const linked = x ? S.ingresos.find(i => i.mcId === x.id) : null;
+  form(x ? '✏️ Editar pago' : '💎 Nuevo pago de cliente', [
+    { k: 'monto', label: 'Lo que pagó el cliente (100%)', type: 'number', req: true },
+    { k: 'moneda', label: 'Moneda', type: 'select', options: { DOP: 'RD$ Pesos', USD: 'US$ Dólares' }, def: 'DOP' },
+    { k: 'modeloId', label: 'Modelo', type: 'select', options: Object.assign({ '': '— Sin modelo —' }, Object.fromEntries(mods.map(m => [m.id, `${m.nombre} (${m.pct}%)`]))), def: first ? first.id : '' },
+    { k: 'pct', label: 'Mi parte (%)', type: 'number', req: true, def: first ? first.pct : 40 },
+    { k: 'fecha', label: 'Fecha', type: 'date', req: true, def: todayStr() },
+    { k: 'cliente', label: 'Cliente (opcional)', ph: 'Nombre o apodo' },
+    { k: 'ubicacion', label: 'Ubicación (opcional)', full: true, ph: 'Ej: Santo Domingo, Piantini…' },
+    { k: 'nota', label: 'Nota', full: true },
+    { k: 'ingreso', label: '💰 Sumar mi parte a Ingresos del mes', type: 'check', full: true, def: x ? !!linked : false }
+  ], x || {}, v => {
+    const addIng = v.ingreso; delete v.ingreso;
+    v.pct = Math.max(0, Math.min(100, v.pct)); const m = mcModelo(v.modeloId); v.modeloNombre = m ? m.nombre : '';
+    let p = x; if (x) Object.assign(x, v); else { p = { id: uid(), ...v }; S.mcPagos.push(p); }
+    const ing = S.ingresos.find(i => i.mcId === p.id);
+    const ingData = { fuente: 'megaclientes', desc: `MegaClientes${p.cliente ? ' · ' + p.cliente : ''}${p.modeloNombre ? ' · ' + p.modeloNombre : ''}`, monto: mcMine(p), moneda: p.moneda || 'DOP', fecha: p.fecha, quien: 'warmi' };
+    if (addIng && ing) Object.assign(ing, ingData); else if (addIng) S.ingresos.push({ id: uid(), mcId: p.id, ...ingData }); else if (ing) S.ingresos = S.ingresos.filter(i => i !== ing);
+    toast(`💎 Anotado · me tocan ${fmtRaw(mcMine(p), p.moneda)}`);
+  }, x ? '<button class="btn danger" id="delMc" style="margin-right:auto">🗑️ Borrar</button>' : '');
+  // calculadora en vivo
+  const f = $('#gform'); const calc = document.createElement('div'); calc.className = 'full mc-calc'; f.insertBefore(calc, f.children[2]);
+  const upd = () => { const mt = num(f.elements.monto.value), pc = num(f.elements.pct.value), cur = f.elements.moneda.value, mine = Math.round(mt * pc) / 100;
+    calc.innerHTML = `<div class="mc-calc-main"><span>Me toca</span><b>${fmtRaw(mine, cur)}</b></div><small class="muted">${pc}% de ${fmtRaw(mt, cur)} · parte de la modelo: ${fmtRaw(mt - mine, cur)} (solo informativo)</small>`; };
+  f.elements.modeloId.onchange = () => { const m = mcModelo(f.elements.modeloId.value); if (m) f.elements.pct.value = m.pct; upd(); };
+  ['monto', 'pct', 'moneda'].forEach(k => f.elements[k].addEventListener('input', upd)); upd();
+  if (!x) setTimeout(() => f.elements.monto.focus(), 50);
+  const d = $('#delMc'); if (d) d.onclick = () => confirmDo('Se borrará este pago.', () => { S.mcPagos = S.mcPagos.filter(p => p.id !== x.id); S.ingresos = S.ingresos.filter(i => i.mcId !== x.id); save(); render(); });
+}
+V.megaclientes = () => {
+  const all = S.mcPagos, hoy = todayStr(), ws = weekStart();
+  const mes = inMonth(all, curMonth), prev = mcSum(inMonth(all, addMonths(curMonth, -1)));
+  const sHoy = mcSum(all.filter(p => p.fecha === hoy)), sSem = mcSum(all.filter(p => p.fecha >= ws && p.fecha <= hoy)), sMes = mcSum(mes);
+  const diff = prev.mio ? Math.round((sMes.mio - prev.mio) / prev.mio * 100) : null;
+  const byMod = {}, byUb = {}; mes.forEach(p => { const k = mcModeloName(p); (byMod[k] = byMod[k] || { mio: 0, total: 0, n: 0 }); byMod[k].mio += toDOP(mcMine(p), p.moneda); byMod[k].total += toDOP(p.monto, p.moneda); byMod[k].n++; if (p.ubicacion) { const u = p.ubicacion.trim(); byUb[u] = (byUb[u] || 0) + toDOP(mcMine(p), p.moneda); } });
+  const q = mcFilt.q.toLowerCase();
+  const list = mes.filter(p => (!mcFilt.modelo || p.modeloId === mcFilt.modelo) && (!q || [p.cliente, p.ubicacion, p.nota, mcModeloName(p)].some(t => (t || '').toLowerCase().includes(q)))).sort((a, b) => b.fecha.localeCompare(a.fecha) || (b.u || 0) - (a.u || 0));
+  const fl = mcSum(list);
+  const tabs = `<div class="btn-row" style="margin-bottom:14px"><button class="btn ${mcTab === 'pagos' ? 'primary' : ''}" data-mctab="pagos">💎 Pagos</button><button class="btn ${mcTab === 'modelos' ? 'primary' : ''}" data-mctab="modelos">👤 Modelos (${S.modelos.length})</button></div>`;
+  const head = `<div class="page-head"><div><h1 class="page-title">💎 MegaClientes</h1><p class="muted">El cliente paga el 100% · aquí ves lo que te toca a ti</p></div><div class="btn-row"><button class="btn primary" id="addMc">➕ Nuevo pago</button></div></div>`;
+  if (mcTab === 'modelos') return head + tabs + `<div class="card"><h3>👤 Modelos <button class="btn sm primary" id="addModelo">➕ Agregar</button></h3>${S.modelos.length ? `<div class="list">${S.modelos.map(m => { const s = mcSum(all.filter(p => p.modeloId === m.id)), sm = mcSum(mes.filter(p => p.modeloId === m.id)); return `<div class="row ${m.activa === false ? 'muted' : ''}"><div class="ic">👤</div><div class="info"><b>${esc(m.nombre)} <span class="chip brand">${m.pct}% mío</span> ${m.activa === false ? '<span class="chip">inactiva</span>' : ''}</b><small>Este mes: ${sm.n} pago(s) · me tocó ${fmt(sm.mio)} · Total histórico: ${fmt(s.mio)}${m.tel ? ` · <a href="https://wa.me/${esc(m.tel.replace(/\D/g, '').replace(/^(?=[89]\d{9}$)/, '1'))}" target="_blank" rel="noopener">WhatsApp</a>` : ''}</small></div><div class="acts"><button data-edmodelo="${m.id}" title="Editar">✏️</button></div></div>`; }).join('')}</div>` : empty('👤', 'Agrega las modelos con el % que te toca de cada una (ej: 40% o 25%).', '<button class="btn primary" id="addModelo2">➕ Agregar modelo</button>')}</div>`;
+  return head + tabs + `
+  <div class="grid g4">
+    ${stat('📅 Hoy', fmt(sHoy.mio), `${sHoy.n} pago(s) · cobrado ${fmt(sHoy.total)}`)}
+    ${stat('🗓️ Esta semana', fmt(sSem.mio), `${sSem.n} pago(s) · cobrado ${fmt(sSem.total)}`)}
+    ${stat(`💎 Mi ganancia · ${MONTHS[+curMonth.slice(5) - 1]}`, fmt(sMes.mio), diff !== null ? `${diff >= 0 ? '▲' : '▼'} ${Math.abs(diff)}% vs mes pasado (${fmt(prev.mio)})` : `${sMes.n} pago(s)`, 'hero')}
+    ${stat('💵 Cobrado a clientes (mes)', fmt(sMes.total), `${sMes.n} pago(s) · promedio mío ${sMes.n ? fmt(sMes.mio / sMes.n) : fmt(0)}`)}
+  </div>
+  <div class="grid g3 section-gap">
+    <div class="card" style="grid-column:span 2"><h3>📒 Pagos de ${monthName(curMonth)}</h3>
+      <div class="filters"><input id="mcq" placeholder="🔎 Cliente, ubicación, nota…" value="${esc(mcFilt.q)}"><select id="mcmod"><option value="">Todas las modelos</option>${S.modelos.map(m => `<option value="${m.id}" ${mcFilt.modelo === m.id ? 'selected' : ''}>${esc(m.nombre)}</option>`).join('')}</select></div>
+      ${list.length ? `<div class="list">${list.map(p => `<div class="row"><div class="ic">💎</div><div class="info"><b>${esc(p.cliente || 'Cliente')} · ${esc(mcModeloName(p))}</b><small>${fmtDate(p.fecha).slice(0, 5)} · ${fmtRaw(p.monto, p.moneda)} × ${p.pct}%${p.ubicacion ? ' · 📍 ' + esc(p.ubicacion) : ''}${S.ingresos.some(i => i.mcId === p.id) ? ' · 💰 en ingresos' : ''}${p.nota ? ' · ' + esc(p.nota) : ''}</small></div><div class="amt green">+${fmtRaw(mcMine(p), p.moneda)}<br><small class="muted">de ${fmtRaw(p.monto, p.moneda)}</small></div><div class="acts"><button data-edmc="${p.id}" title="Editar">✏️</button></div></div>`).join('')}</div>${mcFilt.q || mcFilt.modelo ? `<p class="muted small">Filtrado: me toca ${fmt(fl.mio)} de ${fmt(fl.total)}</p>` : ''}` : empty('💎', `Sin pagos en ${monthName(curMonth)}`, '<button class="btn primary" id="addMc2">➕ Anotar pago</button>')}
+    </div>
+    <div class="card"><h3>🏆 Por modelo (mes)</h3>${Object.keys(byMod).length ? Object.entries(byMod).sort((a, b) => b[1].mio - a[1].mio).map(([k, v], i) => `<div class="budget-item"><div class="budget-top"><span>${['🥇', '🥈', '🥉'][i] || '•'} ${esc(k)} <small class="muted">(${v.n})</small></span><b>${fmt(v.mio)}</b></div><div class="progress"><div style="width:${pct(v.mio, sMes.mio)}%"></div></div></div>`).join('') : empty('🏆', 'Sin datos')}
+      ${Object.keys(byUb).length ? `<h3 class="section-gap">📍 Por ubicación</h3>${Object.entries(byUb).sort((a, b) => b[1] - a[1]).slice(0, 6).map(([k, v]) => `<div class="kv"><span>${esc(k)}</span><b>${fmt(v)}</b></div>`).join('')}` : ''}
+    </div>
+  </div>
+  <div class="card section-gap"><h3>📊 Mi ganancia por mes</h3><div class="chart-box"><canvas id="cMc"></canvas></div></div>`;
+};
+V.megaclientes.after = () => {
+  ['#addMc', '#addMc2'].forEach(s => { const b = $(s); if (b) b.onclick = () => editMcPago(); });
+  ['#addModelo', '#addModelo2'].forEach(s => { const b = $(s); if (b) b.onclick = () => editModelo(); });
+  document.querySelectorAll('[data-mctab]').forEach(b => b.onclick = () => { mcTab = b.dataset.mctab; render(); });
+  document.querySelectorAll('[data-edmodelo]').forEach(b => b.onclick = () => editModelo(S.modelos.find(m => m.id === b.dataset.edmodelo)));
+  document.querySelectorAll('[data-edmc]').forEach(b => b.onclick = () => editMcPago(S.mcPagos.find(p => p.id === b.dataset.edmc)));
+  const q = $('#mcq'); if (q) q.oninput = e => { mcFilt.q = e.target.value; render(); const el = $('#mcq'); el.focus(); el.setSelectionRange(el.value.length, el.value.length); };
+  const ms = $('#mcmod'); if (ms) ms.onchange = e => { mcFilt.modelo = e.target.value; render(); };
+  if ($('#cMc')) { const months = [-5, -4, -3, -2, -1, 0].map(k => addMonths(curMonth, k)), ss = months.map(m => mcSum(inMonth(S.mcPagos, m)));
+    chart('cMc', { type: 'bar', data: { labels: months.map(m => MONTHS[+m.slice(5) - 1].slice(0, 3)), datasets: [{ label: 'Mi ganancia', data: ss.map(s => toView(s.mio)), backgroundColor: '#7c5cff', borderRadius: 8 }, { label: 'Cobrado a clientes', data: ss.map(s => toView(s.total)), backgroundColor: 'rgba(34,211,238,.35)', borderRadius: 8 }] }, options: { maintainAspectRatio: false, plugins: { legend: { position: 'bottom' } }, scales: { y: { ticks: { callback: v => Number(v).toLocaleString('es-DO', { notation: 'compact' }) } } } } }); }
+};
+function mcWidget() {
+  if (!S.mcPagos.length) return '';
+  const mes = inMonth(S.mcPagos, curMonth), s = mcSum(mes), h = mcSum(S.mcPagos.filter(p => p.fecha === todayStr()));
+  const by = {}; mes.forEach(p => { const k = mcModeloName(p); by[k] = (by[k] || 0) + toDOP(mcMine(p), p.moneda); }); const top = Object.entries(by).sort((a, b) => b[1] - a[1])[0];
+  return `<div class="card section-gap"><h3>💎 MegaClientes <button class="btn sm" data-v="megaclientes" data-go>Ver todo</button></h3><div class="grid g4">
+    <div class="stat"><div class="label">💎 Mi ganancia del mes</div><div class="value green">${fmt(s.mio)}</div><div class="sub">${s.n} pago(s)</div></div>
+    <div class="stat"><div class="label">📅 Hoy</div><div class="value">${fmt(h.mio)}</div><div class="sub">${h.n} pago(s)</div></div>
+    <div class="stat"><div class="label">💵 Cobrado a clientes</div><div class="value">${fmt(s.total)}</div><div class="sub">este mes</div></div>
+    <div class="stat"><div class="label">🏆 Top del mes</div><div class="value" style="font-size:1.05rem">${top ? esc(top[0]) : '—'}</div><div class="sub">${top ? fmt(top[1]) : ''}</div></div></div></div>`;
+}
+
 /* Metas + fondo de emergencia */
 function editMeta(x = null) {
   form(x ? '✏️ Editar meta' : '🐷 Nueva meta de ahorro', [
@@ -698,7 +801,7 @@ V.ajustes = () => `<div class="page-head"><div><h1 class="page-title">⚙️ Aju
       <h3 class="section-gap">🎨 Tema</h3><div class="btn-row"><button class="btn" data-theme-set="dark">🌙 Oscuro</button><button class="btn" data-theme-set="light">☀️ Claro</button></div></div>
     <div class="card"><h3>💾 Respaldo</h3><p class="muted small">Además de la sincronización, descarga un respaldo de vez en cuando: es tu copia de seguridad por si algo pasa.</p>
       <div class="btn-row"><button class="btn primary" id="expJson">⬇️ Descargar respaldo (JSON)</button><label class="btn">⬆️ Importar respaldo<input type="file" id="impJson" accept=".json,application/json" hidden></label></div>
-      <h3 class="section-gap">📊 Exportar a Excel</h3><div class="btn-row"><button class="btn" id="expCsv">⬇️ Movimientos (CSV)</button><button class="btn" id="expCsvR">⬇️ Rifas (CSV)</button></div></div>
+      <h3 class="section-gap">📊 Exportar a Excel</h3><div class="btn-row"><button class="btn" id="expCsv">⬇️ Movimientos (CSV)</button><button class="btn" id="expCsvR">⬇️ Rifas (CSV)</button><button class="btn" id="expCsvMc">⬇️ MegaClientes (CSV)</button></div></div>
     <div class="card"><h3>🧪 Datos</h3><p class="muted small">Carga datos de ejemplo para ver cómo funciona todo (no son tus datos reales). Luego bórralos y empieza con lo tuyo.</p>
       <div class="btn-row"><button class="btn" id="demo">🧪 Cargar datos de ejemplo</button><button class="btn danger" id="wipe">🗑️ Borrar todo</button></div>
       <p class="muted small section-gap">Yudiahorro v1 · hecho con 💜 para la casa de ${esc(S.settings.nombre1)} & ${esc(S.settings.nombre2)}</p></div>
@@ -718,6 +821,7 @@ V.ajustes.after = () => {
     S.gastos.forEach(x => rows.push(['Gasto', x.fecha, (GASTO_CATS[x.categoria] || [])[1], x.desc, x.monto, x.moneda, toDOP(x.monto, x.moneda).toFixed(2), QUIEN[x.quien], x.recurrente ? 'Sí' : 'No']));
     rows.splice(1, rows.length, ...rows.slice(1).sort((a, b) => a[1].localeCompare(b[1])));
     download(`yudiahorro-movimientos-${todayStr()}.csv`, csv(rows), 'text/csv;charset=utf-8'); };
+  $('#expCsvMc').onclick = () => { const rows = [['Fecha', 'Cliente', 'Modelo', 'Ubicación', 'Pagó el cliente', 'Moneda', 'Mi %', 'Me toca', 'Nota']]; S.mcPagos.slice().sort((a, b) => a.fecha.localeCompare(b.fecha)).forEach(p => rows.push([p.fecha, p.cliente, mcModeloName(p), p.ubicacion, p.monto, p.moneda || 'DOP', p.pct, mcMine(p), p.nota])); download(`yudiahorro-megaclientes-${todayStr()}.csv`, csv(rows), 'text/csv;charset=utf-8'); };
   $('#expCsvR').onclick = () => { const rows = [['Rifa', 'Premio', 'Fecha sorteo', 'Número', 'Comprador', 'Teléfono', 'Pagado', 'Precio']]; S.rifas.forEach(r => Object.entries(r.numeros).forEach(([n, v]) => rows.push([r.nombre, r.premio, r.fecha, n, v.nombre, v.tel, v.pagado ? 'Sí' : 'No', r.precio]))); download(`yudiahorro-rifas-${todayStr()}.csv`, csv(rows), 'text/csv;charset=utf-8'); };
   $('#demo').onclick = () => isEmpty() ? loadDemo() : confirmDo('Esto reemplaza tus datos actuales con datos de EJEMPLO. Descarga un respaldo antes si tienes datos reales.', loadDemo);
   $('#wipe').onclick = () => confirmDo(Sync.on ? 'Se borrará TODO, también en los otros dispositivos sincronizados. Descarga un respaldo antes si lo necesitas.' : 'Se borrará TODO de este navegador. Descarga un respaldo antes si lo necesitas.', () => { const keep = { theme: S.settings.theme, pin: S.settings.pin }; S = blank(); Object.assign(S.settings, keep); save(); render(); toast('🗑️ Todo borrado'); });
@@ -758,6 +862,11 @@ function loadDemo() {
     { id: uid(), nombre: 'Cooperativa (ejemplo)', tipo: 'coop', modo: 'mercado', invertido: 35000, actual: 37800, moneda: 'DOP', tasa: 8, fecha: dd(-8, 1), mov: [] },
     { id: uid(), nombre: 'Bitcoin (ejemplo)', tipo: 'cripto', modo: 'mercado', invertido: 300, actual: 0, moneda: 'USD', fecha: dd(-9, 1), mov: [], cerrada: { valor: 240, fecha: dd(-2, 12), nota: 'Vendí para salir' } }
   ];
+  const mods = [['Modelo A (ejemplo)', 40], ['Modelo B (ejemplo)', 40], ['Modelo C (ejemplo)', 25]].map(([nombre, pct]) => ({ id: uid(), nombre, pct, activa: true }));
+  d.modelos = mods;
+  const ubs = ['Zona Colonial (ejemplo)', 'Piantini (ejemplo)', '', 'Santiago (ejemplo)'];
+  for (let k = -3; k <= 0; k++) { const days = k === 0 ? Math.max(1, +todayStr().slice(8)) : 28; for (let j = 0; j < (k === 0 ? Math.min(9, days) : 12); j++) { const m = mods[j % 3]; d.mcPagos.push({ id: uid(), fecha: dd(k, 1 + Math.floor(Math.random() * days)), cliente: `Cliente ${j + 1} (ejemplo)`, modeloId: m.id, modeloNombre: m.nombre, ubicacion: ubs[j % 4], monto: [2000, 2500, 3000, 4000, 5000][rnd(0, 4)], moneda: 'DOP', pct: m.pct, nota: '' }); } }
+  d.mcPagos.push({ id: uid(), fecha: todayStr(), cliente: 'Cliente de hoy (ejemplo)', modeloId: mods[0].id, modeloNombre: mods[0].nombre, ubicacion: 'Piantini (ejemplo)', monto: 3000, moneda: 'DOP', pct: 40, nota: '' });
   d.metas = [
     { id: uid(), emoji: '🏠', nombre: 'Inicial de la casa (ejemplo)', objetivo: 600000, ahorrado: 145000, moneda: 'DOP', fecha: `${+m0.slice(0, 4) + 2}-12-31` },
     { id: uid(), emoji: '✈️', nombre: 'Viaje a Punta Cana (ejemplo)', objetivo: 40000, ahorrado: 31000, moneda: 'DOP', fecha: dd(4, 15) },
@@ -802,7 +911,7 @@ function lockScreen() {
 /* ---------- Sincronización en la nube (cifrada de punta a punta) ---------- */
 const SYNC_URL = 'https://yudiahorro-sync.santiagowarmi8.workers.dev';
 const SYNC_KEY = 'yudiahorro_sync';
-const COLS = ['ingresos', 'gastos', 'inversiones', 'rifas', 'metas', 'deudas', 'pagos'];
+const COLS = ['ingresos', 'gastos', 'inversiones', 'rifas', 'metas', 'deudas', 'pagos', 'modelos', 'mcPagos'];
 const LOCAL_ONLY = ['theme', 'pin'];
 const clone = o => JSON.parse(JSON.stringify(o));
 const sigItem = x => JSON.stringify(x, (k, v) => (k === 'u' || k === '_f') ? undefined : v);
